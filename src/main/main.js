@@ -281,6 +281,7 @@ async function startRecording() {
   // et personne n'attend un feu vert avant de commencer sa phrase.
   recordingStartedAt = Date.now();
   segmentsInserted = 0;
+  liveContext = '';
   const live = Boolean(store.get('liveMode'));
   setState('recording', { live });
   showOverlay();
@@ -433,6 +434,13 @@ ipcMain.on('recorder:started', () => {
  */
 let insertQueue = Promise.resolve();
 let segmentsInserted = 0;
+/**
+ * Ce qui a déjà été transcrit dans la dictée en cours.
+ * En mode direct, chaque phrase part seule à la transcription : sans ce rappel,
+ * le modèle perd le fil d'une phrase à l'autre et se trompe sur les mots que
+ * seul le contexte permet de trancher.
+ */
+let liveContext = '';
 
 ipcMain.on('recorder:audio', (_e, payload) => {
   const prepared = prepareText(payload).catch((err) => {
@@ -465,7 +473,11 @@ async function prepareText({ buffer, mime, durationMs, segment = false }) {
 
   if (!segment) setState('working', { step: 'transcription' });
   const t0 = Date.now();
-  const raw = await transcribe({ audio, mime, store, signal });
+  // Les segments partent en parallèle : le contexte est celui disponible à cet
+  // instant, pas forcément la phrase immédiatement précédente. C'est sans
+  // importance — il sert d'indice au modèle, pas de vérité à respecter.
+  const context = segment ? liveContext : '';
+  const raw = await transcribe({ audio, mime, store, signal, context });
   log(`transcription (${Date.now() - t0} ms) :`, JSON.stringify(raw));
 
   if (!raw) {
@@ -478,9 +490,11 @@ async function prepareText({ buffer, mime, durationMs, segment = false }) {
     return null;
   }
 
+  if (segment) liveContext = `${liveContext} ${raw}`.trim().slice(-600);
+
   if (!segment) setState('working', { step: 'mise en forme' });
   const t1 = Date.now();
-  const text = await format({ text: raw, store, appName: targetApp, signal });
+  const text = await format({ text: raw, store, appName: targetApp, signal, context });
   log(`mise en forme (${Date.now() - t1} ms) :`, JSON.stringify(text));
 
   return { raw, text };
@@ -537,6 +551,7 @@ async function deliver({ raw, text }, { durationMs, segment = false, final = fal
   // Fin de dictée : le compteur repart à zéro, sinon la dictée suivante
   // commencerait par une espace héritée de celle-ci.
   segmentsInserted = 0;
+  liveContext = '';
 
   setState('done', { words, text: text.slice(0, 90), pasted: result.pasted });
   setTimeout(() => {

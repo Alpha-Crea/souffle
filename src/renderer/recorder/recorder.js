@@ -29,7 +29,9 @@ let segmentStartedAt = 0;
 
 /* Détection de fin de phrase */
 const SILENCE_RMS = 0.012; // en dessous, on considère qu'il n'y a pas de voix
-const SILENCE_TO_CUT_MS = 700; // durée de blanc qui clôt une phrase
+// Durée de blanc qui clôt une phrase. 700 ms attendaient une vraie respiration ;
+// à 500 ms le texte part dès la fin du souffle, sans couper au milieu d'un mot.
+const SILENCE_TO_CUT_MS = 500;
 const MIN_SPEECH_MS = 600; // en deçà, ce n'est pas une phrase mais un bruit
 const MAX_SEGMENT_MS = 15000; // on coupe de force pour ne pas accumuler
 let speechMs = 0;

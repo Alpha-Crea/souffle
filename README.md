@@ -70,6 +70,20 @@ Deux régimes, choisis explicitement dans Réglages → Intelligence :
 La règle est posée deux fois dans le prompt système, en tête et en pied : c'est la consigne qu'un
 modèle trahit le plus volontiers quand le reste des instructions est dans une autre langue.
 
+## Mode direct
+
+Le texte s'écrit au fil des **phrases**, pas des mots : chaque blanc de 500 ms clôt un segment,
+qui part aussitôt à la transcription pendant que la phrase suivante s'enregistre.
+
+Un segment isolé prive le modèle du contexte dont il se sert pour trancher entre deux mots qui
+sonnent pareil. Souffle lui redonne donc la fin de ce qui vient d'être transcrit comme amorce, et la
+reformulation reçoit le même rappel dans `<deja_ecrit>` — pour enchaîner majuscules et accords sans
+jamais répéter ce qui est déjà écrit.
+
+Le mot à mot, lui, n'est pas atteignable avec cette architecture : chaque segment coûte un
+aller-retour réseau, et le texte déjà collé dans une application tierce ne peut plus être repris.
+Écrire tôt et corriger ensuite sont contradictoires quand on écrit chez les autres.
+
 ## Dictées multilingues
 
 Whisper détecte **une seule langue par enregistrement**. Enchaîner anglais, français et allemand

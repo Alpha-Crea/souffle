@@ -44,7 +44,7 @@ async function postJson(url, key, payload, signal) {
 /* Transcription                                                       */
 /* ------------------------------------------------------------------ */
 
-async function transcribe({ audio, mime, store, signal }) {
+async function transcribe({ audio, mime, store, signal, context = '' }) {
   const provider = store.get('sttProvider');
   const key = store.getSecret(KEY_FOR[provider]);
   if (!key && provider !== 'custom') {
@@ -60,11 +60,20 @@ async function transcribe({ audio, mime, store, signal }) {
   const lang = store.get('language');
   if (lang && lang !== 'auto') form.append('language', lang);
 
-  // Amorce : uniquement la liste des termes, sans phrase porteuse.
-  // Une amorce rédigée en français orientait la détection de langue de Whisper
-  // vers le français et abîmait les dictées en anglais ou en allemand.
+  // Amorce : la liste des termes, sans phrase porteuse. Une amorce rédigée en
+  // français orientait la détection de langue de Whisper vers le français et
+  // abîmait les dictées en anglais ou en allemand.
+  //
+  // En mode direct, on y ajoute la fin de ce qui vient d'être transcrit. Whisper
+  // traite l'amorce comme le texte qui précède l'audio : c'est ce qui lui rend le
+  // contexte qu'un découpage en phrases lui enlève — et c'est ce qui fait la
+  // différence de précision entre une dictée d'un bloc et la même en direct.
+  // Ce contexte est dans la langue réellement parlée : il ne fausse pas la
+  // détection de langue, contrairement à une phrase écrite d'avance.
   const dict = (store.get('dictionary') || []).filter(Boolean);
-  if (dict.length) form.append('prompt', dict.join(', '));
+  const amorce = [dict.join(', '), context.trim().slice(-600)].filter(Boolean).join(' ');
+  // Whisper plafonne l'amorce à ~224 jetons : on garde la fin, la plus proche de l'audio.
+  if (amorce) form.append('prompt', amorce.slice(-850));
 
   const res = await fetch(url, {
     method: 'POST',
@@ -122,7 +131,7 @@ function languageRule(store) {
   ].join(' ');
 }
 
-function buildSystemPrompt(store, appName) {
+function buildSystemPrompt(store, appName, context = '') {
   const tone = store.get('appTones')?.[appName] || store.get('tone') || 'neutre';
   const dict = (store.get('dictionary') || []).filter(Boolean);
   const snippets = (store.get('snippets') || []).filter((s) => s && s.trigger && s.value);
@@ -151,6 +160,14 @@ function buildSystemPrompt(store, appName) {
   ];
 
   if (appName) lines.push(`- Le texte va être inséré dans l'application « ${appName} ». Adapte la longueur et le registre en conséquence.`);
+  if (context) {
+    lines.push(
+      "- Le contenu de <deja_ecrit> est le texte déjà inséré juste avant, en mode direct.",
+      "  Il sert UNIQUEMENT à enchaîner correctement : majuscule ou minuscule d'attaque, accords,",
+      "  ponctuation de liaison, et à ne pas répéter ce qui vient d'être dit.",
+      "  Tu ne le réécris pas et tu ne le répètes pas : ta réponse ne contient que la réécriture de <dictee>."
+    );
+  }
   if (dict.length) lines.push(`- Orthographe imposée pour ces termes : ${dict.join(', ')}.`);
   if (snippets.length) {
     lines.push(
@@ -170,6 +187,7 @@ function buildSystemPrompt(store, appName) {
 }
 
 const WRAP = (t) => `<dictee>\n${t}\n</dictee>`;
+const WRAP_CONTEXT = (t) => `<deja_ecrit>\n${t}\n</deja_ecrit>\n`;
 
 /**
  * Exemples : c'est ce qui tient le modèle en place, bien plus qu'une consigne.
@@ -232,13 +250,15 @@ function looksLikeAnswer(raw, out, translating) {
   return null;
 }
 
-async function format({ text, store, appName, signal }) {
+async function format({ text, store, appName, signal, context = '' }) {
   if (!text) return '';
   if (!store.get('formatEnabled')) return text;
 
   const provider = store.get('llmProvider');
   const key = store.getSecret(KEY_FOR[provider]);
   const url = `${baseUrl(provider, store.get('customLlmUrl'))}/chat/completions`;
+  // Assez pour enchaîner une phrase, trop peu pour tenter le modèle de tout réécrire.
+  const before = context.trim().slice(-300);
 
   try {
     const data = await postJson(
@@ -248,9 +268,9 @@ async function format({ text, store, appName, signal }) {
         model: store.get('llmModel'),
         temperature: 0,
         messages: [
-          { role: 'system', content: buildSystemPrompt(store, appName) },
+          { role: 'system', content: buildSystemPrompt(store, appName, before) },
           ...fewShot(store),
-          { role: 'user', content: WRAP(text) }
+          { role: 'user', content: (before ? WRAP_CONTEXT(before) : '') + WRAP(text) }
         ]
       },
       signal
@@ -260,7 +280,7 @@ async function format({ text, store, appName, signal }) {
     if (!out) return text;
 
     // Le modèle renvoie parfois les balises : on les retire avant de juger.
-    out = out.replace(/<\/?dictee>/gi, '').trim();
+    out = out.replace(/<\/?(?:dictee|deja_ecrit)>/gi, '').trim();
 
     const suspicious = looksLikeAnswer(text, out, store.get('outputMode') === 'translate');
     if (suspicious) {
