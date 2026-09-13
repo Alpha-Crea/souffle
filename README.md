@@ -175,8 +175,24 @@ Le mode diagnostic logue chaque étape dans le terminal :
 autorisation micro, obtention du flux, octets enregistrés, durée de la transcription, texte obtenu,
 résultat de l'insertion. Les lignes `[rec]` viennent du moteur de capture, les autres du process principal.
 
-Si la capture ne confirme pas son démarrage en 2,5 s, la dictée s'interrompt avec un message explicite
-plutôt que de laisser la pilule tourner dans le vide.
+Si la fenêtre de capture ne donne plus signe de vie pendant 3,5 s, la dictée s'interrompt avec un
+message explicite plutôt que de laisser la pilule tourner dans le vide. Chaque tentative d'ouverture
+du micro réarme ce délai : ouvrir une entrée audio peut légitimement demander plusieurs essais.
+
+### « Micro pris par une autre app »
+
+Une application qui tient le micro (ChatGPT, Teams, Zoom, un assistant vocal) peut faire échouer
+l'ouverture du flux — ou, pire, laisser `getUserMedia` sans réponse. Souffle borne chaque tentative
+à 1,8 s, puis redescend une liste de replis : micro mémorisé, micro par défaut, micro par défaut sans
+traitement du signal, puis chaque entrée audio de la machine une par une. Le périphérique qui a
+fonctionné est mémorisé pour la dictée suivante.
+
+Réciproquement, Souffle relâche le micro après une minute d'inactivité au lieu de le garder ouvert
+indéfiniment : c'est ce qui évite de confisquer l'entrée audio aux autres applications, et
+d'hériter d'un flux périmé après un changement de périphérique.
+
+Si le message persiste, quittez l'application qui utilise le micro et relancez la dictée ; le
+terminal (`npm run diag`) nomme le périphérique et l'erreur exacte pour chaque tentative.
 
 ## Packager
 

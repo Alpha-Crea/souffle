@@ -44,6 +44,9 @@ let maxDurationTimer = null;
 
 const DIAG = process.argv.includes('--diag');
 const MAX_RECORDING_MS = 120000;
+// Délai sans le moindre signe de vie de la fenêtre de capture. Ouvrir le micro
+// peut demander plusieurs essais : c'est chaque essai qui réarme ce compte.
+const CAPTURE_WATCHDOG_MS = 3500;
 
 /** Journal horodaté : c'est ce qui rend une panne lisible depuis le terminal. */
 function log(...args) {
@@ -291,17 +294,7 @@ async function startRecording() {
 
   // Filet de sécurité : si la capture ne confirme pas son démarrage, on ne
   // laisse pas la pilule tourner dans le vide indéfiniment.
-  clearTimeout(captureWatchdog);
-  captureWatchdog = setTimeout(() => {
-    if (state !== 'recording') return;
-    log('ERREUR : la capture micro n’a jamais démarré');
-    globalShortcut.unregister('Escape');
-    setState('error', { message: 'Micro injoignable' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 3000);
-  }, 2500);
+  armCaptureWatchdog();
 
   clearTimeout(maxDurationTimer);
   maxDurationTimer = setTimeout(() => {
@@ -393,6 +386,33 @@ function onFatal(err) {
     /* on ne peut plus rien faire de propre ici */
   }
 }
+
+/**
+ * Chien de garde du démarrage.
+ * Il ne compte pas le temps total d'ouverture du micro : la fenêtre de capture
+ * peut légitimement essayer plusieurs périphériques quand une autre application
+ * tient le micro. Chaque tentative réarme le délai ; seul un silence complet de
+ * la fenêtre de capture déclenche l'erreur.
+ */
+function armCaptureWatchdog(ms = CAPTURE_WATCHDOG_MS) {
+  clearTimeout(captureWatchdog);
+  captureWatchdog = setTimeout(() => {
+    if (state !== 'recording') return;
+    log('ERREUR : la capture micro n’a jamais démarré');
+    globalShortcut.unregister('Escape');
+    setState('error', { message: 'Micro injoignable' });
+    setTimeout(() => {
+      setState('idle');
+      hideOverlay(0);
+    }, 3000);
+  }, ms);
+}
+
+/** La fenêtre de capture essaie d'ouvrir une entrée audio : elle est vivante. */
+ipcMain.on('recorder:acquiring', () => {
+  if (state !== 'recording') return;
+  armCaptureWatchdog();
+});
 
 /** La fenêtre de capture confirme que le flux tourne vraiment. */
 ipcMain.on('recorder:started', () => {
