@@ -80,20 +80,6 @@ Souffle laisse donc la dictée dans le presse-papier : un ⌘V manuel rattrape n
 manqué. Rendre l'ancien contenu est une option (Réglages → Général), désactivée par défaut — la
 restaurer efface la dictée juste au moment où on en a besoin.
 
-## Mode direct
-
-Le texte s'écrit au fil des **phrases**, pas des mots : chaque blanc de 500 ms clôt un segment,
-qui part aussitôt à la transcription pendant que la phrase suivante s'enregistre.
-
-Un segment isolé prive le modèle du contexte dont il se sert pour trancher entre deux mots qui
-sonnent pareil. Souffle lui redonne donc la fin de ce qui vient d'être transcrit comme amorce, et la
-reformulation reçoit le même rappel dans `<deja_ecrit>` — pour enchaîner majuscules et accords sans
-jamais répéter ce qui est déjà écrit.
-
-Le mot à mot, lui, n'est pas atteignable avec cette architecture : chaque segment coûte un
-aller-retour réseau, et le texte déjà collé dans une application tierce ne peut plus être repris.
-Écrire tôt et corriger ensuite sont contradictoires quand on écrit chez les autres.
-
 ## Dictées multilingues
 
 Whisper détecte **une seule langue par enregistrement**. Enchaîner anglais, français et allemand
@@ -132,13 +118,21 @@ Souffle écrit la transcription brute. Vos mots valent toujours mieux qu'une inv
 Réglages → Général → **Mode direct**. Le texte s'écrit **phrase par phrase pendant que vous parlez**,
 au lieu d'arriver d'un bloc à la fin.
 
-Souffle surveille le niveau sonore et coupe sur vos silences : 700 ms de blanc après au moins
+Souffle surveille le niveau sonore et coupe sur vos silences : 500 ms de blanc après au moins
 600 ms de voix clôt une phrase, qui part aussitôt en transcription pendant que la suivante
 s'enregistre. Un segment est coupé de force au bout de 15 s.
 
-Pourquoi pas du mot-à-mot ? Parce que nettoyer « euh, enfin, je voulais dire » exige la phrase
-entière. La granularité de la phrase est le meilleur compromis entre l'immédiateté et un texte
-réellement propre — c'est aussi la raison pour laquelle Wispr Flow n'écrit pas en temps réel.
+**Le contexte est rendu au modèle.** Un segment isolé prive Whisper de ce qui lui sert à trancher
+entre deux mots qui sonnent pareil — d'où un direct sensiblement moins juste qu'une dictée d'un
+bloc. La fin de ce qui vient d'être transcrit est donc jointe à son amorce, et la reformulation
+reçoit le même rappel dans `<deja_ecrit>`, avec la consigne de ne pas le répéter.
+
+Pourquoi pas du mot-à-mot ? Trois raisons qui tiennent ensemble : nettoyer « euh, enfin, je voulais
+dire » exige la phrase entière ; chaque segment coûte un aller-retour réseau ; et le texte déjà
+collé dans une application tierce ne peut plus être repris — écrire tôt et corriger ensuite sont
+contradictoires quand on écrit chez les autres. La phrase est le meilleur compromis entre
+l'immédiateté et un texte réellement propre, et c'est aussi pourquoi Wispr Flow n'écrit pas en
+temps réel.
 
 Les phrases sont transcrites en parallèle mais **écrites dans l'ordre où vous les avez prononcées** :
 une phrase courte revenue plus vite ne double jamais la précédente.
