@@ -70,6 +70,16 @@ Deux régimes, choisis explicitement dans Réglages → Intelligence :
 La règle est posée deux fois dans le prompt système, en tête et en pied : c'est la consigne qu'un
 modèle trahit le plus volontiers quand le reste des instructions est dans une autre langue.
 
+## Le presse-papier comme filet
+
+Le collage passe par le presse-papier puis une frappe ⌘V. Or une frappe envoyée sans erreur ne
+prouve pas qu'elle a été reçue : une fenêtre sans champ de saisie, un focus repris entre-temps, et
+le texte n'atterrit nulle part.
+
+Souffle laisse donc la dictée dans le presse-papier : un ⌘V manuel rattrape n'importe quel collage
+manqué. Rendre l'ancien contenu est une option (Réglages → Général), désactivée par défaut — la
+restaurer efface la dictée juste au moment où on en a besoin.
+
 ## Mode direct
 
 Le texte s'écrit au fil des **phrases**, pas des mots : chaque blanc de 500 ms clôt un segment,
@@ -137,7 +147,7 @@ une phrase courte revenue plus vite ne double jamais la précédente.
 
 - **Raccourci global** en bascule, ou **maintenir pour parler** (voir plus bas).
 - **Overlay flottant** qui ne vole jamais le focus : niveau sonore en direct, chrono, états.
-- **Insertion réelle** dans l'app active, presse-papier restauré derrière.
+- **Insertion réelle** dans l'app active, le texte restant dans le presse-papier comme filet.
 - **Nettoyage IA** : tics de langage, ponctuation, majuscules, accents, paragraphes.
 - **Consignes orales** : « nouveau paragraphe », « entre guillemets », « en liste à puces », « efface ça ».
 - **Dictionnaire** : noms propres et jargon injectés à la fois dans l'amorce Whisper et dans le prompt de réécriture.
@@ -162,7 +172,7 @@ src/renderer/
 ```
 
 Le flux d'une dictée : raccourci → capture Opus → `POST /audio/transcriptions` →
-`POST /chat/completions` (mise en forme) → presse-papier → frappe collage → restauration.
+`POST /chat/completions` (mise en forme) → presse-papier → frappe collage.
 
 ## Maintenir pour parler
 

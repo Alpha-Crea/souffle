@@ -17,6 +17,11 @@ const DEFAULTS = {
   liveMode: false, // écriture phrase par phrase pendant qu'on parle
   playSounds: true,
   autoPaste: true,
+  // Restaurer l'ancien presse-papier après le collage fait perdre la dictée dès
+  // que le collage a raté — application sans champ de saisie, fenêtre changée
+  // entre-temps. Tant que le texte y reste, un ⌘V manuel rattrape n'importe
+  // quel échec. D'où : désactivé par défaut.
+  restoreClipboard: false,
   refocusTarget: true,
   launchAtLogin: false,
 

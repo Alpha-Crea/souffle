@@ -13,6 +13,7 @@ const {
   globalShortcut,
   screen,
   shell,
+  clipboard,
   nativeImage,
   systemPreferences,
   dialog
@@ -508,7 +509,8 @@ async function deliver({ raw, text }, { durationMs, segment = false, final = fal
   const result = await inject.insertText(prefix + text, {
     autoPaste: store.get('autoPaste'),
     targetApp,
-    refocus: store.get('refocusTarget')
+    refocus: store.get('refocusTarget'),
+    restoreClipboard: store.get('restoreClipboard')
   });
   log('insertion :', JSON.stringify(result));
   if (result.refocused) log(`focus rendu à « ${result.refocused} »`);
@@ -669,6 +671,19 @@ ipcMain.handle('shortcut:validate', (_e, accel) => {
   }
 });
 ipcMain.handle('app:openExternal', (_e, url) => shell.openExternal(url));
+/**
+ * Copie demandée par la fenêtre de réglages (bouton « Copier » de l'historique).
+ * navigator.clipboard, côté renderer, exige que le document ait le focus et
+ * rejette sans bruit sinon. Le presse-papier du process principal, lui, écrit
+ * toujours.
+ */
+ipcMain.handle('app:copyText', (_e, text) => {
+  const value = String(text ?? '');
+  if (!value) return false;
+  clipboard.writeText(value);
+  log(`copie manuelle : ${value.length} caractères`);
+  return true;
+});
 ipcMain.handle('app:dictate', () => toggleRecording());
 
 /* ------------------------------------------------------------------ */

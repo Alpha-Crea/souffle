@@ -3,7 +3,9 @@
  * Insertion du texte dans l'application qui a le focus.
  *
  * Stratégie volontairement sans module natif : on passe par le presse-papier
- * puis on simule Cmd+V / Ctrl+V au niveau OS, et on restaure l'ancien presse-papier.
+ * puis on simule Cmd+V / Ctrl+V au niveau OS. Le texte reste ensuite dans le
+ * presse-papier — c'est le filet quand le collage rate ; le rendre à son ancien
+ * contenu est une option, désactivée par défaut.
  *   - macOS   : osascript + System Events   (requiert Accessibilité)
  *   - Windows : PowerShell SendKeys
  *   - Linux   : xdotool si présent, sinon wtype (Wayland)
@@ -119,10 +121,13 @@ const sys = { frontmostApp, focusApp, sendPasteKeystroke };
 
 /**
  * @param {string} text
- * @param {{autoPaste?:boolean, targetApp?:string, refocus?:boolean}} opts
+ * @param {{autoPaste?:boolean, targetApp?:string, refocus?:boolean, restoreClipboard?:boolean}} opts
  * @returns {Promise<{pasted:boolean, reason?:string, refocused?:string}>}
  */
-async function insertText(text, { autoPaste = true, targetApp = '', refocus = true } = {}) {
+async function insertText(
+  text,
+  { autoPaste = true, targetApp = '', refocus = true, restoreClipboard = false } = {}
+) {
   if (!text) return { pasted: false, reason: 'empty' };
 
   const previous = clipboard.readText();
@@ -157,10 +162,17 @@ async function insertText(text, { autoPaste = true, targetApp = '', refocus = tr
     return { pasted: false, reason: 'keystroke-failed' };
   }
 
-  // Restaure l'ancien contenu du presse-papier une fois le collage digéré.
-  setTimeout(() => {
-    if (clipboard.readText() === text) clipboard.writeText(previous);
-  }, 1200);
+  // Une frappe ⌘V envoyée sans erreur ne prouve pas que l'application l'a
+  // reçue : un Finder, une fenêtre sans champ de saisie, un focus repris par
+  // une autre app, et le texte n'atterrit nulle part. Restaurer l'ancien
+  // presse-papier là-dessus efface la dictée pour de bon. On ne le fait donc
+  // que si l'utilisateur l'a explicitement demandé ; par défaut le texte reste
+  // disponible et un ⌘V manuel rattrape le collage manqué.
+  if (restoreClipboard) {
+    setTimeout(() => {
+      if (clipboard.readText() === text) clipboard.writeText(previous);
+    }, 1200);
+  }
 
   return { pasted: true, refocused };
 }
