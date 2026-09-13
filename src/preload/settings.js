@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('souffle', {
   testSecret: (provider, key, customUrl) =>
     ipcRenderer.invoke('secret:test', { provider, key, customUrl }),
   validateShortcut: (accel) => ipcRenderer.invoke('shortcut:validate', accel),
+  copyText: (text) => ipcRenderer.invoke('app:copyText', text),
   history: () => ipcRenderer.invoke('history:list'),
   clearHistory: () => ipcRenderer.invoke('history:clear'),
   askAccessibility: () => ipcRenderer.invoke('perm:accessibility'),

@@ -17,6 +17,18 @@ function toast(msg) {
 
 const save = (patch) => api.set(patch);
 
+/** Interrupteurs simples : même liste pour l'affichage initial et pour l'écoute. */
+const TOGGLES = [
+  'autoPaste',
+  'restoreClipboard',
+  'refocusTarget',
+  'playSounds',
+  'launchAtLogin',
+  'formatEnabled',
+  'privacyMode',
+  'liveMode'
+];
+
 function bind(id, key, { type = 'value', parse = (v) => v } = {}) {
   const el = $(id);
   if (!el) return;
@@ -244,9 +256,18 @@ async function renderHistory() {
 
     const copy = document.createElement('button');
     copy.textContent = 'Copier';
-    copy.addEventListener('click', () => {
-      navigator.clipboard.writeText(it.text);
-      toast('Copié');
+    // navigator.clipboard exige que le document ait le focus et rejette en
+    // silence quand ce n'est pas le cas : le bouton semblait alors marcher sans
+    // rien copier. Le presse-papier d'Electron, côté process principal, n'a ni
+    // cette contrainte ni ce mode d'échec muet.
+    copy.addEventListener('click', async () => {
+      try {
+        await api.copyText(it.text);
+        toast('Copié');
+      } catch (err) {
+        toast('Copie impossible');
+        console.error('copie échouée :', err);
+      }
     });
 
     el.append(meta, body, copy);
@@ -323,16 +344,12 @@ async function init() {
   ];
   simple.forEach((k) => ($(k).value = cfg[k] ?? ''));
 
-  ['autoPaste', 'refocusTarget', 'playSounds', 'launchAtLogin', 'formatEnabled', 'privacyMode', 'liveMode'].forEach(
-    (k) => ($(k).checked = Boolean(cfg[k]))
-  );
+  TOGGLES.forEach((k) => ($(k).checked = Boolean(cfg[k])));
   $('historyLimit').value = cfg.historyLimit;
   $('dictionary').value = (cfg.dictionary || []).join('\n');
 
   simple.forEach((k) => bind(k, k));
-  ['autoPaste', 'refocusTarget', 'playSounds', 'launchAtLogin', 'formatEnabled', 'privacyMode', 'liveMode'].forEach(
-    (k) => bind(k, k, { type: 'checked' })
-  );
+  TOGGLES.forEach((k) => bind(k, k, { type: 'checked' }));
   bind('historyLimit', 'historyLimit', { parse: (v) => Math.max(0, parseInt(v, 10) || 0) });
   bind('dictionary', 'dictionary', {
     parse: (v) => v.split('\n').map((s) => s.trim()).filter(Boolean)

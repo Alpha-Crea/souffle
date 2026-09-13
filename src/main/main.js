@@ -13,6 +13,7 @@ const {
   globalShortcut,
   screen,
   shell,
+  clipboard,
   nativeImage,
   systemPreferences,
   dialog
@@ -44,6 +45,9 @@ let maxDurationTimer = null;
 
 const DIAG = process.argv.includes('--diag');
 const MAX_RECORDING_MS = 120000;
+// Délai sans le moindre signe de vie de la fenêtre de capture. Ouvrir le micro
+// peut demander plusieurs essais : c'est chaque essai qui réarme ce compte.
+const CAPTURE_WATCHDOG_MS = 3500;
 
 /** Journal horodaté : c'est ce qui rend une panne lisible depuis le terminal. */
 function log(...args) {
@@ -278,6 +282,7 @@ async function startRecording() {
   // et personne n'attend un feu vert avant de commencer sa phrase.
   recordingStartedAt = Date.now();
   segmentsInserted = 0;
+  liveContext = '';
   const live = Boolean(store.get('liveMode'));
   setState('recording', { live });
   showOverlay();
@@ -291,17 +296,7 @@ async function startRecording() {
 
   // Filet de sécurité : si la capture ne confirme pas son démarrage, on ne
   // laisse pas la pilule tourner dans le vide indéfiniment.
-  clearTimeout(captureWatchdog);
-  captureWatchdog = setTimeout(() => {
-    if (state !== 'recording') return;
-    log('ERREUR : la capture micro n’a jamais démarré');
-    globalShortcut.unregister('Escape');
-    setState('error', { message: 'Micro injoignable' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 3000);
-  }, 2500);
+  armCaptureWatchdog();
 
   clearTimeout(maxDurationTimer);
   maxDurationTimer = setTimeout(() => {
@@ -394,6 +389,33 @@ function onFatal(err) {
   }
 }
 
+/**
+ * Chien de garde du démarrage.
+ * Il ne compte pas le temps total d'ouverture du micro : la fenêtre de capture
+ * peut légitimement essayer plusieurs périphériques quand une autre application
+ * tient le micro. Chaque tentative réarme le délai ; seul un silence complet de
+ * la fenêtre de capture déclenche l'erreur.
+ */
+function armCaptureWatchdog(ms = CAPTURE_WATCHDOG_MS) {
+  clearTimeout(captureWatchdog);
+  captureWatchdog = setTimeout(() => {
+    if (state !== 'recording') return;
+    log('ERREUR : la capture micro n’a jamais démarré');
+    globalShortcut.unregister('Escape');
+    setState('error', { message: 'Micro injoignable' });
+    setTimeout(() => {
+      setState('idle');
+      hideOverlay(0);
+    }, 3000);
+  }, ms);
+}
+
+/** La fenêtre de capture essaie d'ouvrir une entrée audio : elle est vivante. */
+ipcMain.on('recorder:acquiring', () => {
+  if (state !== 'recording') return;
+  armCaptureWatchdog();
+});
+
 /** La fenêtre de capture confirme que le flux tourne vraiment. */
 ipcMain.on('recorder:started', () => {
   clearTimeout(captureWatchdog);
@@ -413,6 +435,13 @@ ipcMain.on('recorder:started', () => {
  */
 let insertQueue = Promise.resolve();
 let segmentsInserted = 0;
+/**
+ * Ce qui a déjà été transcrit dans la dictée en cours.
+ * En mode direct, chaque phrase part seule à la transcription : sans ce rappel,
+ * le modèle perd le fil d'une phrase à l'autre et se trompe sur les mots que
+ * seul le contexte permet de trancher.
+ */
+let liveContext = '';
 
 ipcMain.on('recorder:audio', (_e, payload) => {
   const prepared = prepareText(payload).catch((err) => {
@@ -445,7 +474,11 @@ async function prepareText({ buffer, mime, durationMs, segment = false }) {
 
   if (!segment) setState('working', { step: 'transcription' });
   const t0 = Date.now();
-  const raw = await transcribe({ audio, mime, store, signal });
+  // Les segments partent en parallèle : le contexte est celui disponible à cet
+  // instant, pas forcément la phrase immédiatement précédente. C'est sans
+  // importance — il sert d'indice au modèle, pas de vérité à respecter.
+  const context = segment ? liveContext : '';
+  const raw = await transcribe({ audio, mime, store, signal, context });
   log(`transcription (${Date.now() - t0} ms) :`, JSON.stringify(raw));
 
   if (!raw) {
@@ -458,9 +491,11 @@ async function prepareText({ buffer, mime, durationMs, segment = false }) {
     return null;
   }
 
+  if (segment) liveContext = `${liveContext} ${raw}`.trim().slice(-600);
+
   if (!segment) setState('working', { step: 'mise en forme' });
   const t1 = Date.now();
-  const text = await format({ text: raw, store, appName: targetApp, signal });
+  const text = await format({ text: raw, store, appName: targetApp, signal, context });
   log(`mise en forme (${Date.now() - t1} ms) :`, JSON.stringify(text));
 
   return { raw, text };
@@ -474,7 +509,8 @@ async function deliver({ raw, text }, { durationMs, segment = false, final = fal
   const result = await inject.insertText(prefix + text, {
     autoPaste: store.get('autoPaste'),
     targetApp,
-    refocus: store.get('refocusTarget')
+    refocus: store.get('refocusTarget'),
+    restoreClipboard: store.get('restoreClipboard')
   });
   log('insertion :', JSON.stringify(result));
   if (result.refocused) log(`focus rendu à « ${result.refocused} »`);
@@ -517,6 +553,7 @@ async function deliver({ raw, text }, { durationMs, segment = false, final = fal
   // Fin de dictée : le compteur repart à zéro, sinon la dictée suivante
   // commencerait par une espace héritée de celle-ci.
   segmentsInserted = 0;
+  liveContext = '';
 
   setState('done', { words, text: text.slice(0, 90), pasted: result.pasted });
   setTimeout(() => {
@@ -634,6 +671,19 @@ ipcMain.handle('shortcut:validate', (_e, accel) => {
   }
 });
 ipcMain.handle('app:openExternal', (_e, url) => shell.openExternal(url));
+/**
+ * Copie demandée par la fenêtre de réglages (bouton « Copier » de l'historique).
+ * navigator.clipboard, côté renderer, exige que le document ait le focus et
+ * rejette sans bruit sinon. Le presse-papier du process principal, lui, écrit
+ * toujours.
+ */
+ipcMain.handle('app:copyText', (_e, text) => {
+  const value = String(text ?? '');
+  if (!value) return false;
+  clipboard.writeText(value);
+  log(`copie manuelle : ${value.length} caractères`);
+  return true;
+});
 ipcMain.handle('app:dictate', () => toggleRecording());
 
 /* ------------------------------------------------------------------ */

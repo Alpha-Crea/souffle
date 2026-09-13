@@ -50,7 +50,7 @@ jobs:
           body: |
             ## Installation
 
-            1. Téléchargez **Souffle-Installateur-0.1.0.exe** ci-dessous.
+            1. Téléchargez l'installateur **Souffle-Installateur-….exe** ci-dessous.
             2. Double-cliquez dessus. Windows affichera un avertissement bleu
                (« Windows a protégé votre ordinateur ») car l'application n'est pas
                signée par un certificat commercial : cliquez sur **Informations

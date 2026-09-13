@@ -8,7 +8,9 @@
  *                 qu'elle est finie, pour que le texte s'écrive pendant qu'on parle.
  *
  * Le flux micro reste ouvert entre deux dictées : le rouvrir coûte 200 à 500 ms
- * et fait clignoter l'indicateur micro du système.
+ * et fait clignoter l'indicateur micro du système. Il est tout de même relâché
+ * après une minute d'inactivité, pour ne pas confisquer le micro aux autres
+ * applications — et pour ne pas hériter d'un flux périmé au réveil.
  *
  * Tout ce qui est logué en « [rec] » remonte dans le terminal.
  */
@@ -27,7 +29,9 @@ let segmentStartedAt = 0;
 
 /* Détection de fin de phrase */
 const SILENCE_RMS = 0.012; // en dessous, on considère qu'il n'y a pas de voix
-const SILENCE_TO_CUT_MS = 700; // durée de blanc qui clôt une phrase
+// Durée de blanc qui clôt une phrase. 700 ms attendaient une vraie respiration ;
+// à 500 ms le texte part dès la fin du souffle, sans couper au milieu d'un mot.
+const SILENCE_TO_CUT_MS = 500;
 const MIN_SPEECH_MS = 600; // en deçà, ce n'est pas une phrase mais un bruit
 const MAX_SEGMENT_MS = 15000; // on coupe de force pour ne pas accumuler
 let speechMs = 0;
@@ -48,36 +52,239 @@ log('format retenu =', MIME || 'défaut du navigateur');
 /* Flux micro                                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Ouvrir le micro n'est pas fiable dès qu'une autre application l'utilise
+ * (ChatGPT, Teams, Zoom, un assistant vocal…). Trois choses peuvent arriver :
+ *   - getUserMedia rejette (NotReadableError / AbortError) ;
+ *   - getUserMedia ne répond JAMAIS — le pire cas, l'application reste figée ;
+ *   - le périphérique d'entrée par défaut a changé et celui d'avant est mort.
+ * On traite les trois : chaque tentative est bornée dans le temps, et on
+ * descend une liste de replis jusqu'à obtenir un flux réellement vivant.
+ */
+const GUM_TIMEOUT_MS = 1800; // au-delà, le périphérique ne répond pas
+const RETRY_PAUSE_MS = 150;
+const IDLE_RELEASE_MS = 60000; // on rend le micro au système après une minute
+const LAST_DEVICE_KEY = 'souffle.dernierMicro';
+
+const PREFERRED = {
+  channelCount: 1,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true
+};
+
+let idleRelease = null;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function rememberDevice(id) {
+  try {
+    if (id) localStorage.setItem(LAST_DEVICE_KEY, id);
+  } catch {
+    /* stockage indisponible : sans conséquence */
+  }
+}
+
+function lastDevice() {
+  try {
+    return localStorage.getItem(LAST_DEVICE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+/** Un flux gardé ouvert peut être mort sans que `active` le dise. */
+function streamUsable() {
+  if (!stream || !stream.active) return false;
+  const track = stream.getAudioTracks()[0];
+  return Boolean(track && track.readyState === 'live' && !track.muted);
+}
+
+/**
+ * Une dictée est-elle en cours ? En mode direct il y a un court instant entre
+ * deux phrases où le MediaRecorder est arrêté : le compteur de niveau, lui,
+ * tourne du début à la fin. C'est donc lui qui fait foi.
+ */
+function busy() {
+  return levelTimer !== null || Boolean(recorder && recorder.state === 'recording');
+}
+
+/** Libère micro et contexte audio : indispensable avant de retenter autrement. */
+function releaseStream(why) {
+  if (stream) {
+    for (const track of stream.getTracks()) {
+      try {
+        track.stop();
+      } catch {
+        /* déjà arrêtée */
+      }
+    }
+    log('micro relâché', why ? `(${why})` : '');
+  }
+  stream = null;
+  analyser = null;
+  if (audioCtx) {
+    const ctx = audioCtx;
+    audioCtx = null;
+    ctx.close().catch(() => {});
+  }
+}
+
+function scheduleRelease() {
+  clearTimeout(idleRelease);
+  idleRelease = setTimeout(() => {
+    if (busy()) return;
+    // Garder le micro ouvert indéfiniment empêcherait les autres applications
+    // de s'en servir — et nous vaudrait le même blocage en retour.
+    releaseStream('inactivité');
+  }, IDLE_RELEASE_MS);
+}
+
+/** getUserMedia borné : un périphérique muet ne doit pas figer la dictée. */
+function askMedia(constraints) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      const err = new Error('le périphérique ne répond pas');
+      err.name = 'TimeoutError';
+      reject(err);
+    }, GUM_TIMEOUT_MS);
+
+    navigator.mediaDevices.getUserMedia(constraints).then(
+      (s) => {
+        clearTimeout(timer);
+        // Réponse après l'abandon : on ne garde surtout pas un micro fantôme ouvert.
+        if (settled) {
+          for (const t of s.getTracks()) t.stop();
+          return;
+        }
+        settled = true;
+        resolve(s);
+      },
+      (err) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        reject(err);
+      }
+    );
+  });
+}
+
+/** Liste ordonnée des tentatives : du confort au dernier recours. */
+async function attempts() {
+  const list = [];
+  const known = lastDevice();
+
+  if (known) {
+    list.push({
+      label: 'micro mémorisé',
+      constraints: { audio: { ...PREFERRED, deviceId: { exact: known } } }
+    });
+  }
+  list.push({ label: 'micro par défaut', constraints: { audio: { ...PREFERRED } } });
+  // Sans traitement : certains pilotes refusent le mode mono + réduction de bruit
+  // quand une autre application tient déjà le périphérique.
+  list.push({ label: 'micro par défaut sans traitement', constraints: { audio: true } });
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    for (const d of devices) {
+      if (d.kind !== 'audioinput' || !d.deviceId) continue;
+      if (d.deviceId === 'default' || d.deviceId === known) continue;
+      list.push({
+        label: `entrée « ${d.label || d.deviceId.slice(0, 8)} »`,
+        constraints: { audio: { deviceId: { exact: d.deviceId } } }
+      });
+    }
+  } catch (err) {
+    log('énumération des périphériques impossible :', err.name);
+  }
+
+  return list;
+}
+
+function micErrorMessage(err) {
+  switch (err && err.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Micro refusé par le système';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'Aucun micro détecté';
+    case 'NotReadableError':
+    case 'TrackStartError':
+    case 'AbortError':
+    case 'TimeoutError':
+      return 'Micro pris par une autre app';
+    default:
+      return `Micro indisponible (${(err && err.name) || 'inconnu'})`;
+  }
+}
+
 async function ensureStream() {
-  if (stream && stream.active) {
+  clearTimeout(idleRelease);
+
+  if (streamUsable()) {
     log('flux déjà ouvert');
     return stream;
   }
-  log('appel getUserMedia…');
-  stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
+  if (stream) releaseStream('flux périmé');
+
+  let lastErr = null;
+  const plans = await attempts();
+
+  for (const plan of plans) {
+    // Chaque essai prévient le process principal : sans ça, son chien de garde
+    // conclurait à une panne alors qu'on est simplement en train de réessayer.
+    window.souffle.sendAcquiring();
+    log(`appel getUserMedia — ${plan.label}`);
+    try {
+      const s = await askMedia(plan.constraints);
+      const track = s.getAudioTracks()[0];
+      if (!track || track.readyState !== 'live') {
+        for (const t of s.getTracks()) t.stop();
+        throw Object.assign(new Error('piste morte à l’ouverture'), { name: 'NotReadableError' });
+      }
+      stream = s;
+      rememberDevice(track.getSettings().deviceId || '');
+      log('flux obtenu :', track.label || '(micro sans nom)');
+
+      track.addEventListener('ended', () => {
+        log('la piste micro a été coupée par le système');
+        if (!busy()) releaseStream('piste terminée');
+        else stream = null;
+      });
+      track.addEventListener('mute', () => log('piste micro coupée (mute) par une autre application'));
+      track.addEventListener('unmute', () => log('piste micro rétablie'));
+
+      audioCtx = new AudioContext();
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.75;
+      src.connect(analyser);
+      return stream;
+    } catch (err) {
+      lastErr = err;
+      log(`échec (${plan.label}) :`, err.name, '—', err.message);
+      releaseStream();
+      // Une autorisation refusée ne sera pas accordée par le périphérique suivant.
+      if (err.name === 'NotAllowedError' || err.name === 'SecurityError') break;
+      await sleep(RETRY_PAUSE_MS);
     }
-  });
-  const track = stream.getAudioTracks()[0];
-  log('flux obtenu :', track ? track.label || '(micro sans nom)' : 'aucune piste');
+  }
 
-  track?.addEventListener('ended', () => {
-    log('la piste micro a été coupée par le système');
-    stream = null;
-  });
-
-  audioCtx = new AudioContext();
-  const src = audioCtx.createMediaStreamSource(stream);
-  analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 512;
-  analyser.smoothingTimeConstant = 0.75;
-  src.connect(analyser);
-  return stream;
+  throw lastErr || Object.assign(new Error('aucune entrée audio'), { name: 'NotFoundError' });
 }
+
+// Brancher un casque ou installer une application audio réordonne les entrées :
+// le flux mémorisé peut alors pointer vers un périphérique qui n'existe plus.
+navigator.mediaDevices?.addEventListener?.('devicechange', () => {
+  log('liste des périphériques audio modifiée');
+  if (!busy()) releaseStream('changement de périphérique');
+});
 
 /* ------------------------------------------------------------------ */
 /* Niveau sonore + découpage sur les silences                          */
@@ -204,17 +411,15 @@ async function start(opts = {}) {
     window.souffle.sendStarted();
   } catch (err) {
     log('échec du démarrage :', err.name, err.message);
-    window.souffle.sendError(
-      err.name === 'NotAllowedError' ? 'Micro refusé par le système'
-      : err.name === 'NotFoundError' ? 'Aucun micro détecté'
-      : `Micro indisponible (${err.name})`
-    );
+    releaseStream('échec du démarrage');
+    window.souffle.sendError(micErrorMessage(err));
   }
 }
 
 function stop() {
   stopping = true;
   stopLevelMeter();
+  scheduleRelease();
   if (recorder && recorder.state === 'recording') {
     recorder.stop();
   } else {
@@ -227,6 +432,7 @@ function cancel() {
   cancelled = true;
   stopping = true;
   stopLevelMeter();
+  scheduleRelease();
   if (recorder && recorder.state === 'recording') recorder.stop();
   chunks = [];
 }

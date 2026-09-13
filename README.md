@@ -70,6 +70,16 @@ Deux régimes, choisis explicitement dans Réglages → Intelligence :
 La règle est posée deux fois dans le prompt système, en tête et en pied : c'est la consigne qu'un
 modèle trahit le plus volontiers quand le reste des instructions est dans une autre langue.
 
+## Le presse-papier comme filet
+
+Le collage passe par le presse-papier puis une frappe ⌘V. Or une frappe envoyée sans erreur ne
+prouve pas qu'elle a été reçue : une fenêtre sans champ de saisie, un focus repris entre-temps, et
+le texte n'atterrit nulle part.
+
+Souffle laisse donc la dictée dans le presse-papier : un ⌘V manuel rattrape n'importe quel collage
+manqué. Rendre l'ancien contenu est une option (Réglages → Général), désactivée par défaut — la
+restaurer efface la dictée juste au moment où on en a besoin.
+
 ## Dictées multilingues
 
 Whisper détecte **une seule langue par enregistrement**. Enchaîner anglais, français et allemand
@@ -108,13 +118,21 @@ Souffle écrit la transcription brute. Vos mots valent toujours mieux qu'une inv
 Réglages → Général → **Mode direct**. Le texte s'écrit **phrase par phrase pendant que vous parlez**,
 au lieu d'arriver d'un bloc à la fin.
 
-Souffle surveille le niveau sonore et coupe sur vos silences : 700 ms de blanc après au moins
+Souffle surveille le niveau sonore et coupe sur vos silences : 500 ms de blanc après au moins
 600 ms de voix clôt une phrase, qui part aussitôt en transcription pendant que la suivante
 s'enregistre. Un segment est coupé de force au bout de 15 s.
 
-Pourquoi pas du mot-à-mot ? Parce que nettoyer « euh, enfin, je voulais dire » exige la phrase
-entière. La granularité de la phrase est le meilleur compromis entre l'immédiateté et un texte
-réellement propre — c'est aussi la raison pour laquelle Wispr Flow n'écrit pas en temps réel.
+**Le contexte est rendu au modèle.** Un segment isolé prive Whisper de ce qui lui sert à trancher
+entre deux mots qui sonnent pareil — d'où un direct sensiblement moins juste qu'une dictée d'un
+bloc. La fin de ce qui vient d'être transcrit est donc jointe à son amorce, et la reformulation
+reçoit le même rappel dans `<deja_ecrit>`, avec la consigne de ne pas le répéter.
+
+Pourquoi pas du mot-à-mot ? Trois raisons qui tiennent ensemble : nettoyer « euh, enfin, je voulais
+dire » exige la phrase entière ; chaque segment coûte un aller-retour réseau ; et le texte déjà
+collé dans une application tierce ne peut plus être repris — écrire tôt et corriger ensuite sont
+contradictoires quand on écrit chez les autres. La phrase est le meilleur compromis entre
+l'immédiateté et un texte réellement propre, et c'est aussi pourquoi Wispr Flow n'écrit pas en
+temps réel.
 
 Les phrases sont transcrites en parallèle mais **écrites dans l'ordre où vous les avez prononcées** :
 une phrase courte revenue plus vite ne double jamais la précédente.
@@ -123,7 +141,7 @@ une phrase courte revenue plus vite ne double jamais la précédente.
 
 - **Raccourci global** en bascule, ou **maintenir pour parler** (voir plus bas).
 - **Overlay flottant** qui ne vole jamais le focus : niveau sonore en direct, chrono, états.
-- **Insertion réelle** dans l'app active, presse-papier restauré derrière.
+- **Insertion réelle** dans l'app active, le texte restant dans le presse-papier comme filet.
 - **Nettoyage IA** : tics de langage, ponctuation, majuscules, accents, paragraphes.
 - **Consignes orales** : « nouveau paragraphe », « entre guillemets », « en liste à puces », « efface ça ».
 - **Dictionnaire** : noms propres et jargon injectés à la fois dans l'amorce Whisper et dans le prompt de réécriture.
@@ -148,7 +166,7 @@ src/renderer/
 ```
 
 Le flux d'une dictée : raccourci → capture Opus → `POST /audio/transcriptions` →
-`POST /chat/completions` (mise en forme) → presse-papier → frappe collage → restauration.
+`POST /chat/completions` (mise en forme) → presse-papier → frappe collage.
 
 ## Maintenir pour parler
 
@@ -175,8 +193,24 @@ Le mode diagnostic logue chaque étape dans le terminal :
 autorisation micro, obtention du flux, octets enregistrés, durée de la transcription, texte obtenu,
 résultat de l'insertion. Les lignes `[rec]` viennent du moteur de capture, les autres du process principal.
 
-Si la capture ne confirme pas son démarrage en 2,5 s, la dictée s'interrompt avec un message explicite
-plutôt que de laisser la pilule tourner dans le vide.
+Si la fenêtre de capture ne donne plus signe de vie pendant 3,5 s, la dictée s'interrompt avec un
+message explicite plutôt que de laisser la pilule tourner dans le vide. Chaque tentative d'ouverture
+du micro réarme ce délai : ouvrir une entrée audio peut légitimement demander plusieurs essais.
+
+### « Micro pris par une autre app »
+
+Une application qui tient le micro (ChatGPT, Teams, Zoom, un assistant vocal) peut faire échouer
+l'ouverture du flux — ou, pire, laisser `getUserMedia` sans réponse. Souffle borne chaque tentative
+à 1,8 s, puis redescend une liste de replis : micro mémorisé, micro par défaut, micro par défaut sans
+traitement du signal, puis chaque entrée audio de la machine une par une. Le périphérique qui a
+fonctionné est mémorisé pour la dictée suivante.
+
+Réciproquement, Souffle relâche le micro après une minute d'inactivité au lieu de le garder ouvert
+indéfiniment : c'est ce qui évite de confisquer l'entrée audio aux autres applications, et
+d'hériter d'un flux périmé après un changement de périphérique.
+
+Si le message persiste, quittez l'application qui utilise le micro et relancez la dictée ; le
+terminal (`npm run diag`) nomme le périphérique et l'erreur exacte pour chaque tentative.
 
 ## Packager
 
