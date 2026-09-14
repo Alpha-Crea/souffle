@@ -179,6 +179,11 @@ npm install uiohook-napi
 
 Sans lui, l'application reste parfaitement fonctionnelle en mode bascule (l'option est grisée).
 
+Le module observe des codes de touches bruts, pas des accélérateurs Electron : lettres, chiffres,
+touches de fonction, ponctuation et touches de navigation sont traduits. Une touche qu'il ne connaît
+pas désactive le seul mode « maintenir » — le terminal le dit, et le mode bascule continue de
+fonctionner avec le même raccourci.
+
 ## Diagnostic
 
 ```bash

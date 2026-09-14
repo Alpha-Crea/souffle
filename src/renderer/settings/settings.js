@@ -74,7 +74,13 @@ function accelerator(e) {
   else if (['Escape', 'Tab', 'Backspace'].includes(key)) return null;
 
   parts.push(key);
-  return parts.length > 1 || key.startsWith('F') ? parts.join('+') : null;
+  // Une touche seule n'est acceptée que si c'est une touche de fonction.
+  // `startsWith('F')` laissait aussi passer la lettre F : appuyer dessus
+  // enregistrait le raccourci « F » — sans modificateur, donc exactement ce
+  // que Souffle s'interdit, et sur macOS de quoi faire taire le raccourci
+  // principal en cassant le gestionnaire de hotkeys du système.
+  const isFunctionKey = /^F\d{1,2}$/.test(key);
+  return parts.length > 1 || isFunctionKey ? parts.join('+') : null;
 }
 
 const shortcutInput = $('shortcut');

@@ -1,7 +1,7 @@
 {
   "name": "souffle",
   "productName": "Souffle",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Dictée vocale IA système : parlez, le texte propre s'écrit là où vous tapez.",
   "author": "Alpha Agency",
   "license": "MIT",
@@ -26,7 +26,7 @@
     "productName": "Souffle",
     "files": [
       "src/**/*",
-      "build/icon.*",
+      "build/*.png",
       "LISEZ-MOI.html",
       "!**/*.map"
     ],
