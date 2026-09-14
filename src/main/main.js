@@ -38,6 +38,8 @@ let settingsWin = null;
 let state = 'idle';
 let recordingStartedAt = 0;
 let targetApp = '';
+/** Numéro de la dictée en cours : sert à ignorer les réponses tardives. */
+let recordingId = 0;
 let abortCtl = null;
 let uiohook = null;
 let captureWatchdog = null;
@@ -247,34 +249,22 @@ async function startRecording() {
     const mic = systemPreferences.getMediaAccessStatus('microphone');
     log('autorisation micro =', mic);
     if (mic === 'denied' || mic === 'restricted') {
-      setState('error', { message: 'Micro bloqué — Réglages Système' });
       shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
-      setTimeout(() => {
-        setState('idle');
-        hideOverlay(0);
-      }, 3000);
+      fail('Micro bloqué — Réglages Système', 3000);
       return;
     }
     if (mic !== 'granted') {
       const ok = await systemPreferences.askForMediaAccess('microphone');
       log('demande micro →', ok);
       if (!ok) {
-        setState('error', { message: 'Micro refusé' });
-        setTimeout(() => {
-          setState('idle');
-          hideOverlay(0);
-        }, 2500);
+        fail('Micro refusé', 2500);
         return;
       }
     }
   }
 
   if (!(await ensureRecorderWindow())) {
-    setState('error', { message: 'Moteur audio indisponible' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 3000);
+    fail('Moteur audio indisponible', 3000);
     return;
   }
 
@@ -283,13 +273,22 @@ async function startRecording() {
   recordingStartedAt = Date.now();
   segmentsInserted = 0;
   liveContext = '';
+  const thisRecording = ++recordingId;
   const live = Boolean(store.get('liveMode'));
   setState('recording', { live });
   showOverlay();
   log(`capture demandée${live ? ' (mode direct)' : ''}`);
   sendToRecorder('recorder:start', { live });
   startEscapeWatch();
+  targetApp = '';
   inject.frontmostApp().then((name) => {
+    // Identifier l'application au premier plan prend de 100 ms à plusieurs
+    // secondes sous Windows. Une réponse qui arrive après le début de la dictée
+    // suivante désignerait la mauvaise fenêtre : on la jette.
+    if (thisRecording !== recordingId) {
+      log(`application cible ignorée (« ${name} » arrivé trop tard)`);
+      return;
+    }
     targetApp = name;
     log('application cible =', name || '(inconnue)');
   });
@@ -324,11 +323,7 @@ function stopRecording() {
   stopEscapeWatch();
   setState('working');
   if (!sendToRecorder('recorder:stop')) {
-    setState('error', { message: 'Moteur audio perdu' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 2500);
+    fail('Moteur audio perdu', 2500);
   }
   ensureMainShortcut();
 }
@@ -372,17 +367,33 @@ function toggleRecording() {
 }
 
 /**
+ * Fin d'une dictée en échec : message dans la pilule, puis retour au repos.
+ *
+ * Centralisé parce que deux nettoyages manquaient dans la moitié des chemins
+ * d'erreur : l'écoute d'Échap restait armée une fois la dictée finie, et la
+ * pilule restait cliquable. Chaque appelant ne choisit plus que son message et
+ * le temps d'affichage.
+ */
+function fail(message, ms = 3000) {
+  stopEscapeWatch();
+  clearTimeout(captureWatchdog);
+  clearTimeout(maxDurationTimer);
+  overlayWin?.setIgnoreMouseEvents(true);
+  setState('error', { message: String(message).slice(0, 60) });
+  setTimeout(() => {
+    setState('idle');
+    hideOverlay(0);
+  }, ms);
+}
+
+/**
  * Une dictée qui échoue ne doit jamais tuer l'application ni ouvrir une boîte
  * de dialogue système : on logue, on remet à zéro, on continue.
  */
 function onFatal(err) {
   log('ERREUR non rattrapée :', err && err.stack ? err.stack : err);
   try {
-    setState('error', { message: 'Erreur interne — voir le terminal' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 3000);
+    fail('Erreur interne — voir le terminal', 3000);
     ensureMainShortcut();
   } catch {
     /* on ne peut plus rien faire de propre ici */
@@ -401,12 +412,7 @@ function armCaptureWatchdog(ms = CAPTURE_WATCHDOG_MS) {
   captureWatchdog = setTimeout(() => {
     if (state !== 'recording') return;
     log('ERREUR : la capture micro n’a jamais démarré');
-    globalShortcut.unregister('Escape');
-    setState('error', { message: 'Micro injoignable' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 3000);
+    fail('Micro injoignable', 3000);
   }, ms);
 }
 
@@ -483,11 +489,7 @@ async function prepareText({ buffer, mime, durationMs, segment = false }) {
 
   if (!raw) {
     if (segment) return null; // un blanc au milieu d'une dictée continue n'est pas une erreur
-    setState('error', { message: 'Rien entendu' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 1800);
+    fail('Rien entendu', 1800);
     return null;
   }
 
@@ -523,22 +525,14 @@ async function deliver({ raw, text }, { durationMs, segment = false, final = fal
   }
 
   if (!result.pasted && result.reason === 'accessibility') {
-    setState('error', { message: 'Copié — autorisez l\u2019Accessibilité' });
     inject.openAccessibilitySettings();
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 2600);
+    fail('Copié — autorisez l\u2019Accessibilité', 2600);
     return;
   }
 
   if (!result.pasted && result.reason === 'keystroke-failed') {
     // Le texte est dans le presse-papier : on le dit plutôt que d'afficher « inséré ».
-    setState('error', { message: 'Copié — collez manuellement' });
-    setTimeout(() => {
-      setState('idle');
-      hideOverlay(0);
-    }, 2400);
+    fail('Copié — collez manuellement', 2400);
     return;
   }
 
@@ -571,11 +565,7 @@ function onPipelineError(err, { segment = false } = {}) {
   }
   log('ERREUR pipeline :', err && err.message ? err.message : err);
   if (segment) return; // en direct, une phrase ratée ne doit pas couper la dictée
-  setState('error', { message: humanError(err) });
-  setTimeout(() => {
-    setState('idle');
-    hideOverlay(0);
-  }, 3200);
+  fail(humanError(err), 3200);
 }
 
 function humanError(err) {
@@ -588,14 +578,8 @@ function humanError(err) {
 }
 
 ipcMain.on('recorder:error', (_e, message) => {
-  clearTimeout(captureWatchdog);
-  clearTimeout(maxDurationTimer);
   log('ERREUR capture :', message);
-  setState('error', { message: String(message).slice(0, 60) });
-  setTimeout(() => {
-    setState('idle');
-    hideOverlay(0);
-  }, 3000);
+  fail(message, 3000);
 });
 
 ipcMain.on('recorder:level', (_e, level) => {
@@ -757,28 +741,64 @@ function startHook() {
   }
 }
 
+/**
+ * Noms de touches d'un accélérateur Electron qui ne s'écrivent pas comme dans
+ * uiohook. Les lettres, chiffres et touches de fonction se déduisent ; le reste
+ * a besoin de cette table.
+ */
+const UIOHOOK_ALIASES = {
+  space: 'Space', tab: 'Tab', backspace: 'Backspace', delete: 'Delete', insert: 'Insert',
+  home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown',
+  up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
+  return: 'Enter', enter: 'Enter', escape: 'Escape', esc: 'Escape',
+  ';': 'Semicolon', '=': 'Equal', ',': 'Comma', '-': 'Minus', '.': 'Period', '/': 'Slash',
+  '`': 'Backquote', '[': 'BracketLeft', '\\': 'Backslash', ']': 'BracketRight', "'": 'Quote'
+};
+
+/**
+ * Code bas niveau de la touche finale du raccourci, ou null si le clavier
+ * bas niveau ne la connaît pas.
+ *
+ * L'ancienne table ne couvrait que sept touches et retombait sur Espace pour
+ * tout le reste : avec un raccourci « Control+Shift+A », le mode « maintenir »
+ * écoutait donc Control+Shift+Espace et restait sourd à la touche choisie.
+ * Mieux vaut ne rien écouter et le dire que d'écouter la mauvaise touche.
+ */
 function holdKeycode() {
+  if (!uiohook) return null;
   const { UiohookKey } = uiohook;
-  const parts = store.get('shortcut').split('+').map((p) => p.trim().toLowerCase());
-  const name = parts[parts.length - 1];
-  const KEYMAP = {
-    space: UiohookKey.Space,
-    f1: UiohookKey.F1, f2: UiohookKey.F2, f3: UiohookKey.F3,
-    f13: UiohookKey.F13, d: UiohookKey.D, v: UiohookKey.V
-  };
-  return KEYMAP[name] ?? UiohookKey.Space;
+  const parts = store.get('shortcut').split('+').map((p) => p.trim());
+  const key = parts[parts.length - 1] || '';
+  const low = key.toLowerCase();
+
+  const name =
+    UIOHOOK_ALIASES[low] ||
+    (/^f\d{1,2}$/.test(low) || /^[a-z]$/.test(low) ? low.toUpperCase() : /^\d$/.test(low) ? low : '');
+
+  const code = name ? UiohookKey[name] : undefined;
+  if (code === undefined) {
+    log(`mode « maintenir » : touche « ${key} » inconnue du clavier bas niveau`);
+    return null;
+  }
+  return code;
 }
 
 function matchesShortcut(e) {
+  const code = holdKeycode();
+  if (code === null) return false;
+
   const parts = store.get('shortcut').split('+').map((p) => p.trim().toLowerCase());
+  // « CommandOrControl » vaut Command sur macOS et Control ailleurs : le ranger
+  // systématiquement dans Control ne collait pas sur Mac.
+  const either = parts.includes('commandorcontrol') || parts.includes('cmdorctrl');
   const want = {
-    ctrl: parts.includes('control') || parts.includes('ctrl') || parts.includes('commandorcontrol'),
+    ctrl: parts.includes('control') || parts.includes('ctrl') || (either && !isMac),
     alt: parts.includes('alt') || parts.includes('option'),
     shift: parts.includes('shift'),
-    meta: parts.includes('command') || parts.includes('cmd') || parts.includes('super')
+    meta: parts.includes('command') || parts.includes('cmd') || parts.includes('super') || (either && isMac)
   };
   return (
-    e.keycode === holdKeycode() &&
+    e.keycode === code &&
     Boolean(e.ctrlKey) === want.ctrl &&
     Boolean(e.altKey) === want.alt &&
     Boolean(e.shiftKey) === want.shift &&

@@ -13,12 +13,25 @@
 const { clipboard, shell, systemPreferences } = require('electron');
 const { execFile } = require('node:child_process');
 
+/**
+ * windowsHide est capital et non cosmétique : sans lui, chaque appel à
+ * PowerShell ouvre une console qui passe au premier plan. Elle devient alors la
+ * fenêtre active — et le Ctrl+V part dans cette console au lieu de l'application
+ * visée, pendant que la détection d'application au premier plan croit que
+ * l'utilisateur travaille dans « powershell ».
+ */
 const run = (cmd, args, opts = {}) =>
   new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 5000, ...opts }, (err, stdout) =>
+    execFile(cmd, args, { timeout: 5000, windowsHide: true, ...opts }, (err, stdout) =>
       err ? reject(err) : resolve(String(stdout || '').trim())
     );
   });
+
+/**
+ * Littéral de chaîne PowerShell. Les guillemets simples n'interprètent ni $ ni
+ * l'accent grave ; seul le guillemet simple lui-même doit être doublé.
+ */
+const psQuote = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
 /* ------------------------------------------------------------------ */
 /* Application au premier plan                                         */
@@ -43,7 +56,12 @@ async function frontmostApp() {
 "@
         $p = 0; [void][W]::GetWindowThreadProcessId([W]::GetForegroundWindow(), [ref]$p)
         (Get-Process -Id $p).ProcessName`;
-      return await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+      // Add-Type compile du C# à la volée : le premier appel après un démarrage
+      // à froid dépasse volontiers cinq secondes. Expirer ici ferait perdre
+      // l'application cible, donc le retour au bon champ.
+      return await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], {
+        timeout: 15000
+      });
     }
     return await run('xdotool', ['getactivewindow', 'getwindowclassname']);
   } catch {
@@ -71,7 +89,7 @@ async function focusApp(name) {
     if (process.platform === 'win32') {
       // AppActivate prend un identifiant de processus : on le retrouve par son nom.
       const ps = `
-        $p = Get-Process -Name ${JSON.stringify(name)} -ErrorAction SilentlyContinue |
+        $p = Get-Process -Name ${psQuote(name)} -ErrorAction SilentlyContinue |
              Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
         if ($p) { (New-Object -ComObject WScript.Shell).AppActivate($p.Id) | Out-Null; 'ok' }`;
       const out = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
