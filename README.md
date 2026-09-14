@@ -18,7 +18,7 @@ npm start
 Au premier lancement, la fenêtre de réglages s'ouvre sur l'onglet **Intelligence** : collez une clé API,
 puis fermez. Souffle vit ensuite dans la barre de menus.
 
-**Raccourci par défaut** — `⌥Espace` (macOS) / `Ctrl+Espace` (Windows, Linux).
+**Raccourci par défaut** — `⌥Espace` (macOS) / `Ctrl+Maj+Espace` (Windows, Linux).
 Appuyez, parlez, puis terminez comme vous voulez :
 
 | Geste | Effet |
@@ -222,6 +222,14 @@ terminal (`npm run diag`) nomme le périphérique et l'erreur exacte pour chaque
 ```bash
 npm run dist:mac    # .dmg (arm64 + x64)
 npm run dist:win    # installeur NSIS
+```
+
+Pour préparer un dossier de distribution complet — les deux `.dmg`, l'installateur Windows
+récupéré depuis les Releases, les deux documents pour l'utilisateur, et l'archive — un script
+assemble le tout sur le Bureau :
+
+```bash
+bash distribution/preparer-le-dossier.sh
 ```
 
 Pour une distribution hors de votre machine, signez et notarisez l'app : sans signature, macOS
