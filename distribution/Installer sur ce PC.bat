@@ -82,6 +82,9 @@ echo     "Executer quand meme". Le reste se fait tout seul.
 echo.
 pause
 
+rem Une ancienne version encore ouverte bloquerait la mise a jour.
+taskkill /im Souffle.exe /f >nul 2>&1
+
 start "" "%INSTALLATEUR%"
 
 echo.
