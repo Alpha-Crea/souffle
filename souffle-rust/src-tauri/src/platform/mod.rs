@@ -25,6 +25,7 @@ mod other {
         true
     }
     pub fn prompt_accessibility() {}
+    pub fn ask_accessibility() {}
     pub fn mic_permission() -> MicPermission {
         MicPermission::Granted
     }

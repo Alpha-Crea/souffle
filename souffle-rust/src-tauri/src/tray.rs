@@ -141,6 +141,7 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
     match id.as_str() {
         "dictate" => engine.toggle(),
         "pause" => engine.toggle_pause(),
+        "cancel" => engine.cancel(),
         "live" => {
             engine.settings.update(|c| c.live_mode = !c.live_mode);
             settings_window::reload(app);

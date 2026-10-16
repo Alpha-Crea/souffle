@@ -2,7 +2,6 @@
 
 use crate::AppState;
 use std::str::FromStr;
-use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
@@ -60,15 +59,24 @@ pub fn register_main(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Échap n'est écouté que pendant une dictée : le reste du temps, rien.
+///
+/// Sur macOS, avec l'Accessibilité, on observe la touche sans l'intercepter.
+/// Sans elle, macOS ne laisse rien observer : on retient alors Échap comme
+/// raccourci le temps de la dictée, comme sous Windows.
 pub fn escape_watch(app: &AppHandle, on: bool) {
+    #[cfg(target_os = "macos")]
+    let monitor = on && crate::platform::accessibility_granted();
+    #[cfg(not(target_os = "macos"))]
+    let monitor = false;
+
     #[cfg(target_os = "macos")]
     {
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             let h = handle.clone();
             crate::platform::macos::escape_monitor(
-                on,
-                Arc::new(move || {
+                monitor,
+                std::sync::Arc::new(move || {
                     if let Some(s) = h.try_state::<AppState>() {
                         s.engine.escape_pressed();
                     }
@@ -76,24 +84,31 @@ pub fn escape_watch(app: &AppHandle, on: bool) {
             );
         });
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // Jamais depuis l'intérieur d'un rappel de raccourci : on repousse.
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let gs = app.global_shortcut();
-            if on {
-                if !gs.is_registered(ESCAPE) {
-                    if let Err(e) = gs.register(ESCAPE) {
-                        crate::log!("Échap indisponible : {e}");
-                    }
+
+    // Jamais depuis l'intérieur d'un rappel de raccourci : on repousse.
+    let app = app.clone();
+    let hotkey = on && !monitor;
+    tauri::async_runtime::spawn(async move {
+        let gs = app.global_shortcut();
+        if hotkey {
+            if !gs.is_registered(ESCAPE) {
+                if let Err(e) = gs.register(ESCAPE) {
+                    crate::log!("Échap indisponible : {e}");
                 }
-            } else if gs.is_registered(ESCAPE) {
-                let _ = gs.unregister(ESCAPE);
             }
-        });
-        let _ = Arc::new(());
-    }
+        } else if gs.is_registered(ESCAPE) {
+            let _ = gs.unregister(ESCAPE);
+        }
+        // Le raccourci principal doit survivre à tout.
+        let main = app.try_state::<AppState>().map(|s| s.engine.cfg().shortcut).unwrap_or_default();
+        if !main.is_empty() && !gs.is_registered(main.as_str()) {
+            crate::log!("raccourci principal perdu, réenregistrement");
+            let _ = register_main(&app);
+            if hotkey {
+                let _ = gs.register(ESCAPE);
+            }
+        }
+    });
 }
 
 /// Affichage lisible : « ⌥ Espace » sur Mac, « Ctrl + Maj + Espace » ailleurs.

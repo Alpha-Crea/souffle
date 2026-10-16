@@ -138,7 +138,7 @@ cat <<'SUITE'
     • Le micro sera demandé à la première dictée.
 
   Raccourci : ⌥ Espace (Option + Espace), inchangé.
-  Pendant la dictée : clic sur la bulle = pause, clic droit = annuler,
+  Pendant la dictée : clic sur la bulle = pause, clic droit = menu,
   glisser = la déplacer.
 
 SUITE

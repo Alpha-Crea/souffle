@@ -66,8 +66,16 @@ pub fn accessibility_granted() -> bool {
     unsafe { AXIsProcessTrusted() }
 }
 
-/// Affiche la demande système d'Accessibilité (une fois par version de l'app),
-/// puis ouvre le bon volet des Réglages.
+/// Affiche la demande système d'Accessibilité, sans rien ouvrir d'autre.
+pub fn ask_accessibility() {
+    unsafe {
+        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+        let dict = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), CFBoolean::true_value().as_CFType())]);
+        AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef() as *const c_void);
+    }
+}
+
+/// Affiche la demande système d'Accessibilité, puis ouvre le bon volet des Réglages.
 pub fn prompt_accessibility() {
     unsafe {
         let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);

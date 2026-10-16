@@ -123,6 +123,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Sans l'Accessibilité, Souffle ne peut ni coller le texte ni entendre
+    // Échap : on la demande dès le lancement plutôt qu'au premier échec.
+    if !platform::accessibility_granted() {
+        platform::ask_accessibility();
+    }
+
     log!(
         "prêt — micro : {:?} · accessibilité : {}",
         platform::mic_permission(),

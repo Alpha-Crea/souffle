@@ -75,7 +75,7 @@ Un clic gauche ouvre les réglages, un clic droit le menu.
 |---|---|
 | Raccourci (**⌥ Espace** sur Mac, **Ctrl + Maj + Espace** sur PC) | démarrer, puis terminer et écrire |
 | **Clic** sur la bulle | pause, puis reprise — ce qui est déjà dit part dans l'historique |
-| **Clic droit** sur la bulle | annuler |
+| **Clic droit** sur la bulle | petit menu : terminer, pause ou annuler |
 | **Glisser** la bulle | la déplacer ; elle reste où vous la posez |
 | **Échap** | terminer (réglable : annuler, ou rien) |
 

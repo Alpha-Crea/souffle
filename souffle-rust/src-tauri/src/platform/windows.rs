@@ -77,6 +77,8 @@ pub fn accessibility_granted() -> bool {
 
 pub fn prompt_accessibility() {}
 
+pub fn ask_accessibility() {}
+
 pub fn mic_permission() -> MicPermission {
     // Windows ne demande rien à une application de bureau : si le micro est
     // coupé dans Confidentialité, la capture le dira.

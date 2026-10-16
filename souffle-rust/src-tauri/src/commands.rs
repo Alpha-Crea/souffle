@@ -1,6 +1,7 @@
 //! Commandes appelées par les pages (réglages, bulle).
 
 use crate::config::{key_name_for, SECRET_KEYS};
+use crate::engine::State as Dictee;
 use crate::history::Entry;
 use crate::{ai, audio, bubble, inject, platform, settings_window, shortcuts, tray, AppState};
 use serde_json::{json, Value};
@@ -155,9 +156,26 @@ pub fn bubble_click(state: State<'_, AppState>) {
     state.engine.bubble_clicked();
 }
 
+/// Clic droit : un petit menu plutôt qu'une annulation immédiate. Un clic
+/// droit malencontreux ne doit jamais faire perdre une dictée.
 #[tauri::command]
-pub fn bubble_right_click(state: State<'_, AppState>) {
-    state.engine.bubble_right_clicked();
+pub fn bubble_right_click(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    let s = state.engine.state();
+    if !matches!(s, Dictee::Recording | Dictee::Paused) {
+        return Ok(());
+    }
+    let e = |err: tauri::Error| err.to_string();
+    let menu = Menu::new(&app).map_err(e)?;
+    menu.append(&MenuItem::with_id(&app, "dictate", "Terminer et écrire", true, None::<&str>).map_err(e)?).map_err(e)?;
+    let pause = if s == Dictee::Paused { "Reprendre" } else { "Mettre en pause" };
+    menu.append(&MenuItem::with_id(&app, "pause", pause, true, None::<&str>).map_err(e)?).map_err(e)?;
+    menu.append(&PredefinedMenuItem::separator(&app).map_err(e)?).map_err(e)?;
+    menu.append(&MenuItem::with_id(&app, "cancel", "Annuler la dictée", true, None::<&str>).map_err(e)?).map_err(e)?;
+    if let Some(w) = app.get_webview_window("bubble") {
+        w.popup_menu(&menu).map_err(e)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
