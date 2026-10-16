@@ -511,7 +511,7 @@ impl Engine {
             MicPermission::Denied => {
                 crate::log!("micro : autorisation refusée");
                 self.desk.open_mic_settings();
-                self.fail("Micro bloqué — Réglages Système", 3000, false);
+                self.fail("Micro non autorisé", 4000, false);
                 return;
             }
             MicPermission::Unknown => {

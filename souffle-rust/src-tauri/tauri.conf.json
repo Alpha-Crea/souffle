@@ -16,7 +16,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "nsis"],
+    "targets": [
+      "app",
+      "nsis"
+    ],
     "category": "Productivity",
     "shortDescription": "Dictée vocale : parlez, le texte propre s'écrit là où vous tapez.",
     "longDescription": "Souffle transcrit votre voix, la remet en forme et la colle dans l'application où vous écrivez.",
@@ -32,13 +35,19 @@
     "macOS": {
       "minimumSystemVersion": "11.0",
       "signingIdentity": "-",
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
     },
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["French"],
+        "languages": [
+          "French"
+        ],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
         "installerHooks": "windows/hooks.nsh"

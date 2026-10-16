@@ -462,7 +462,7 @@ async fn watchdog_and_microphone() {
     *lock(&b.desk.mic) = Some(MicPermission::Denied);
     b.engine.start();
     settle().await;
-    assert_eq!(b.last_view().message.as_deref(), Some("Micro bloqué — Réglages Système"));
+    assert_eq!(b.last_view().message.as_deref(), Some("Micro non autorisé"));
     assert!(lock(&b.rec.cmds).is_empty());
 }
 

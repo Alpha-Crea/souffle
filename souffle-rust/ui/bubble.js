@@ -107,7 +107,10 @@ function render(v) {
   hint.textContent =
     state === 'working' && step ? step.charAt(0).toUpperCase() + step.slice(1)
     : state === 'done' && words ? `${words} mot${words > 1 ? 's' : ''}`
-    : state === 'error' ? (retryable ? 'Cliquez pour réessayer' : 'Réglages de Souffle')
+    : state === 'error' && retryable ? 'Cliquez pour réessayer'
+    : state === 'error' && /^Micro/.test(message || '') ? 'Réglages Système › Micro'
+    : state === 'error' && /Accessibilité/.test(message || '') ? 'Réglages Système › Accessibilité'
+    : state === 'error' ? 'Réglages de Souffle'
     : state === 'recording' && live && segments
       ? `${segments} phrase${segments > 1 ? 's' : ''} écrite${segments > 1 ? 's' : ''}`
       : h;
