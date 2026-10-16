@@ -62,6 +62,8 @@ pub enum MicPermission {
 pub trait Ai: Send + Sync {
     async fn transcribe(&self, cfg: &Config, audio: &Audio, context: &str) -> Result<String, AiError>;
     async fn format(&self, cfg: &Config, text: &str, app: &str, context: &str) -> String;
+    /// Prépare la connexion pendant que l'on parle.
+    async fn prewarm(&self, _cfg: &Config) {}
 }
 
 #[async_trait]
@@ -547,6 +549,9 @@ impl Engine {
         self.beep(Beep::Start);
         crate::log!("capture demandée{} — dictée {}", if live { " (mode direct)" } else { "" }, d.id);
         self.rec.send(Cmd::Start { id: d.id.clone(), live, persist: !cfg.privacy_mode, microphone: cfg.microphone.clone() });
+        let ai = self.ai.clone();
+        let warm = cfg.clone();
+        self.rt.spawn(async move { ai.prewarm(&warm).await });
         if cfg.escape_action != "off" {
             self.desk.escape_watch(true);
         }

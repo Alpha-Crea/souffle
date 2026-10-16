@@ -218,6 +218,7 @@ pub fn escape_monitor(on: bool, on_escape: Arc<dyn Fn() + Send + Sync>) {
     let cb = on_escape.clone();
     let global = RcBlock::new(move |ev: NonNull<NSEvent>| {
         if unsafe { ev.as_ref() }.keyCode() == ESCAPE {
+            crate::log!("Échap reçu (moniteur)");
             cb();
         }
     });

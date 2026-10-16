@@ -1,11 +1,12 @@
 //! Découpage de la parole.
 //!
 //! Deux régimes :
-//!   - classique : un seul morceau par dictée (ou par pause). Une très longue
-//!     dictée est tout de même coupée sur un silence toutes les quatre à six
-//!     minutes : chaque morceau reste sous la taille acceptée par les
-//!     fournisseurs, part à la transcription pendant qu'on parle encore, et
-//!     la fin de dictée n'a plus que le dernier morceau à attendre ;
+//!   - classique : un morceau par pause, et, pendant qu'on parle, une coupe
+//!     sur un silence toutes les vingt-cinq secondes environ. Chaque morceau
+//!     part à la transcription pendant qu'on parle encore : à la fin de la
+//!     dictée, il ne reste que les dernières secondes à transcrire, et le
+//!     texte arrive presque aussitôt, quelle que soit la durée. Chaque morceau
+//!     reste aussi bien sous la taille acceptée par les fournisseurs ;
 //!   - direct : on coupe à chaque fin de phrase pour écrire au fil de l'eau.
 
 use super::wav::{to_i16, SAMPLE_RATE};
@@ -22,9 +23,11 @@ const MIN_SPEECH_MS: u32 = 600;
 const MAX_LIVE_SEGMENT_MS: u32 = 15_000;
 /// Avant la première parole d'une phrase, on ne garde qu'un court élan.
 const PRE_ROLL_MS: u32 = 400;
-/// Mode classique : coupe sur un silence passé ce délai…
-const CLASSIC_SOFT_CUT_MS: u32 = 240_000;
-const CLASSIC_SOFT_SILENCE_MS: u32 = 700;
+/// Mode classique : coupe sur un silence passé ce délai… Assez long pour
+/// que chaque morceau garde son contexte, assez court pour que la fin de
+/// dictée n'ait presque plus rien à attendre.
+const CLASSIC_SOFT_CUT_MS: u32 = 25_000;
+const CLASSIC_SOFT_SILENCE_MS: u32 = 600;
 /// … et de force passé celui-ci.
 const CLASSIC_HARD_CUT_MS: u32 = 360_000;
 /// Un morceau dont aucune trame ne dépasse ce niveau est un pur silence :
@@ -257,19 +260,22 @@ mod tests {
     }
 
     #[test]
-    fn classic_cuts_very_long_dictations_on_a_silence() {
+    fn classic_cuts_on_a_silence_while_speaking() {
         let mut s = Segmenter::new(false);
         let mut cuts = vec![];
-        for _ in 0..245 {
+        for _ in 0..30 {
             cuts.extend(s.push(&tone(1000, 0.2)));
         }
-        assert!(cuts.is_empty(), "pas de coupe sans silence avant six minutes");
-        cuts.extend(s.push(&silence(800)));
-        assert_eq!(cuts.len(), 1);
+        assert!(cuts.is_empty(), "pas de coupe en pleine parole");
+        cuts.extend(s.push(&silence(300)));
+        assert!(cuts.is_empty(), "une respiration ne suffit pas");
+        cuts.extend(s.push(&silence(400)));
+        assert_eq!(cuts.len(), 1, "coupe sur un vrai silence passé 25 s");
+        assert!(cuts[0].duration_ms() >= 30_000);
         for _ in 0..365 {
             cuts.extend(s.push(&tone(1000, 0.2)));
         }
-        assert_eq!(cuts.len(), 2, "coupe forcée à six minutes");
+        assert_eq!(cuts.len(), 2, "coupe forcée à six minutes sans aucun silence");
     }
 
     #[test]

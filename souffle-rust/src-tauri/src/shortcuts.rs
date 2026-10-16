@@ -12,8 +12,9 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .with_handler(|app: &AppHandle<R>, shortcut: &Shortcut, event: ShortcutEvent| {
             let Some(state) = app.try_state::<AppState>() else { return };
             let engine = state.engine.clone();
-            if Shortcut::from_str(ESCAPE).is_ok_and(|e| &e == shortcut) {
+            if Shortcut::from_str(ESCAPE).is_ok_and(|e| e.id() == shortcut.id()) {
                 if event.state == ShortcutState::Pressed {
+                    crate::log!("Échap reçu (raccourci)");
                     engine.escape_pressed();
                 }
                 return;
@@ -60,9 +61,13 @@ pub fn register_main(app: &AppHandle) -> Result<(), String> {
 
 /// Échap n'est écouté que pendant une dictée : le reste du temps, rien.
 ///
-/// Sur macOS, avec l'Accessibilité, on observe la touche sans l'intercepter.
-/// Sans elle, macOS ne laisse rien observer : on retient alors Échap comme
-/// raccourci le temps de la dictée, comme sous Windows.
+/// Deux moyens à la fois, pour que la touche marche quoi qu'il arrive :
+///   - Échap retenu comme raccourci le temps de la dictée (aucune autorisation) ;
+///   - sur macOS, avec l'Accessibilité, un moniteur qui observe la touche,
+///     au cas où le raccourci serait refusé.
+///
+/// Les deux peuvent se déclencher pour un même appui : le second est ignoré,
+/// la dictée n'étant plus en cours.
 pub fn escape_watch(app: &AppHandle, on: bool) {
     #[cfg(target_os = "macos")]
     let monitor = on && crate::platform::accessibility_granted();
@@ -87,13 +92,15 @@ pub fn escape_watch(app: &AppHandle, on: bool) {
 
     // Jamais depuis l'intérieur d'un rappel de raccourci : on repousse.
     let app = app.clone();
-    let hotkey = on && !monitor;
+    let hotkey = on;
+    crate::log!("Échap : écoute {} (raccourci : {hotkey}, moniteur : {monitor})", if on { "active" } else { "coupée" });
     tauri::async_runtime::spawn(async move {
         let gs = app.global_shortcut();
         if hotkey {
             if !gs.is_registered(ESCAPE) {
-                if let Err(e) = gs.register(ESCAPE) {
-                    crate::log!("Échap indisponible : {e}");
+                match gs.register(ESCAPE) {
+                    Ok(()) => crate::log!("Échap retenu comme raccourci"),
+                    Err(e) => crate::log!("Échap indisponible comme raccourci : {e}"),
                 }
             }
         } else if gs.is_registered(ESCAPE) {

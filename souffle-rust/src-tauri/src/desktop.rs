@@ -31,6 +31,10 @@ impl Ai for RealAi {
     async fn format(&self, cfg: &Config, text: &str, app: &str, context: &str) -> String {
         ai::format(&self.http, cfg, &self.keys(), text, app, context).await
     }
+
+    async fn prewarm(&self, cfg: &Config) {
+        ai::prewarm(&self.http, cfg, &self.keys()).await;
+    }
 }
 
 pub struct CaptureRecorder(pub Capture);

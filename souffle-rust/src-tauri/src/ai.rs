@@ -80,6 +80,10 @@ fn other_provider(provider: &str) -> Option<&'static str> {
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
+        // La connexion chiffrée reste ouverte entre deux dictées : la
+        // rétablir coûte de 100 à 300 ms à chaque fois.
+        .pool_idle_timeout(Duration::from_secs(300))
+        .tcp_keepalive(Duration::from_secs(60))
         .user_agent(concat!("Souffle/", env!("CARGO_PKG_VERSION")))
         .build()
         .unwrap_or_default()
@@ -102,6 +106,27 @@ async fn check(res: reqwest::Response) -> Result<Value, AiError> {
         return Err(AiError::Http { status, body });
     }
     res.json::<Value>().await.map_err(|e| AiError::Other(format!("réponse illisible : {e}")))
+}
+
+/// Ouvre la connexion aux fournisseurs pendant que l'on parle : à la fin de
+/// la dictée, l'audio part sans attendre la poignée de main TLS.
+pub async fn prewarm(http: &reqwest::Client, cfg: &Config, keys: &dyn Keys) {
+    let mut providers = vec![(cfg.stt_provider.clone(), cfg.custom_stt_url.clone())];
+    if cfg.format_enabled && cfg.llm_provider != cfg.stt_provider {
+        providers.push((cfg.llm_provider.clone(), cfg.custom_llm_url.clone()));
+    }
+    for (provider, custom) in providers {
+        let base = base_url(&provider, &custom);
+        if base.is_empty() {
+            continue;
+        }
+        let key = keys.key(key_name_for(&provider));
+        let mut req = http.get(format!("{base}/models")).timeout(Duration::from_secs(8));
+        if !key.is_empty() {
+            req = req.bearer_auth(key);
+        }
+        let _ = req.send().await;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -626,8 +651,7 @@ mod tests {
 
     #[test]
     fn prompt_carries_the_rules() {
-        let mut cfg = Config::default();
-        cfg.dictionary = vec!["KACHÉ".into(), " ".into()];
+        let mut cfg = Config { dictionary: vec!["KACHÉ".into(), " ".into()], ..Default::default() };
         cfg.app_tones.insert("Slack".into(), "casual".into());
         let p = system_prompt(&cfg, "Slack", "");
         assert!(p.contains("Rétractations"));
