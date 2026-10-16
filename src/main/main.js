@@ -568,13 +568,45 @@ function onPipelineError(err, { segment = false } = {}) {
   fail(humanError(err), 3200);
 }
 
+/**
+ * Message lisible extrait d'une réponse d'erreur de fournisseur. OpenAI et Groq
+ * répondent tous deux {"error":{"message":"…"}} : c'est la seule partie qui dit
+ * à l'utilisateur quoi faire.
+ */
+function providerMessage(raw) {
+  const i = raw.indexOf('{');
+  if (i < 0) return '';
+  try {
+    const data = JSON.parse(raw.slice(i));
+    const m = data?.error?.message ?? data?.message ?? '';
+    return typeof m === 'string' ? m.trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Traduit une panne en phrase compréhensible. On s'appuie sur le code HTTP
+ * réel plutôt que de chercher « 401 » dans le texte : un corps d'erreur peut
+ * très bien contenir ces chiffres pour une tout autre raison.
+ *
+ * Pas de troncature ici — la pilule tronque à l'affichage, mais le bouton
+ * « Tester » des réglages montre le message entier.
+ */
 function humanError(err) {
-  const m = String(err.message || err);
-  if (m.includes('401')) return 'Clé API refusée';
-  if (m.includes('429')) return 'Quota dépassé';
-  if (/fetch failed|ENOTFOUND|ECONNREFUSED/.test(m)) return 'Pas de réseau';
-  if (m.includes('Aucune clé')) return 'Clé API manquante';
-  return m.slice(0, 60);
+  const raw = String(err?.message || err);
+  const status = Number(err?.status) || 0;
+  const detail = providerMessage(raw);
+
+  if (status === 401 || (!status && /\b401\b/.test(raw))) return 'Clé API refusée';
+  if (status === 429 || (!status && /\b429\b/.test(raw))) return 'Quota dépassé';
+  // 403 : la clé est reconnue mais l'accès est refusé — compte suspendu, clé
+  // révoquée côté fournisseur, ou modèle qui exige une action dans la console.
+  if (status === 403) return detail ? `Accès refusé — ${detail}` : 'Accès refusé par le fournisseur';
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN/.test(raw)) return 'Pas de réseau';
+  if (raw.includes('Aucune clé')) return 'Clé API manquante';
+  if (status) return detail ? `Erreur ${status} — ${detail}` : `Erreur ${status} du fournisseur`;
+  return detail || raw;
 }
 
 ipcMain.on('recorder:error', (_e, message) => {
