@@ -8,6 +8,10 @@ ponctuation, reprises en cours de phrase, ton adapté à l'application active).
 
 ---
 
+> **Version native** — le dossier [`souffle-rust/`](souffle-rust/) contient la réécriture en Rust
+> (Tauri) : même comportement, quelques mégaoctets au lieu de 250, bulle en verre dessinée par
+> macOS, thème clair/sombre. Elle reprend les réglages et l'historique de cette version-ci.
+
 ## Démarrage
 
 ```bash
