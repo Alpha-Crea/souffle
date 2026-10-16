@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Souffle — Réglages</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="drag" data-tauri-drag-region></div>
+    <div class="brand" data-tauri-drag-region>
+      <img src="img/logo.png" alt="" width="40" height="40">
+      <div>
+        <div class="brand-name">Souffle</div>
+        <div class="brand-version" id="version">—</div>
+      </div>
+    </div>
+    <nav class="nav" aria-label="Sections">
+      <button data-tab="general" class="active"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Général</button>
+      <button data-tab="intelligence"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.6L18.5 9l-4.7 1.5L12 15l-1.8-4.5L5.5 9l4.7-1.4z"/><path d="M18 15l.8 2 2 .8-2 .7-.8 2-.8-2-2-.7 2-.8z"/></svg>Intelligence</button>
+      <button data-tab="vocabulary"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 013 3v13H8a3 3 0 01-3-3z"/><path d="M5 17a3 3 0 013-3h11"/></svg>Vocabulaire</button>
+      <button data-tab="history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>Historique</button>
+      <button data-tab="privacy"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-3 8.2-7 10-4-1.8-7-5.6-7-10V6z"/></svg>Confidentialité</button>
+      <button data-tab="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></svg>À propos</button>
+    </nav>
+    <button class="try" id="try"><span class="try-bars"><i></i><i></i><i></i><i></i><i></i></span>Tester la dictée</button>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="drag" data-tauri-drag-region></div>
+    <div class="banner warn" id="shortcutError" hidden></div>
+    <div class="banner info" id="imported" hidden>
+      Vos réglages et votre historique ont été repris de l'ancienne version de Souffle.
+      Recollez simplement votre clé API dans <a href="#intelligence" data-goto="intelligence">Intelligence</a> :
+      elle était chiffrée par l'ancienne application et ne peut pas être relue.
+    </div>
+
+    <!-- ============================== Général ============================== -->
+    <section class="tab" id="tab-general">
+      <header class="head">
+        <h1>Général</h1>
+        <p>Comment déclencher la dictée, et où le texte atterrit.</p>
+      </header>
+
+      <div class="card">
+        <div class="row">
+          <div class="what"><strong>Raccourci</strong><span>Appuyez, parlez, ré-appuyez.</span></div>
+          <div class="how">
+            <button class="keycap" id="shortcut" title="Cliquez puis tapez la combinaison">—</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Déclenchement</strong><span id="modeHelp">Un appui démarre, un second termine.</span></div>
+          <div class="how">
+            <div class="seg" data-key="mode">
+              <button data-value="toggle">Bascule</button>
+              <button data-value="hold">Maintenir</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Touche Échap pendant la dictée</strong><span id="escapeHelp"></span></div>
+          <div class="how">
+            <div class="seg" data-key="escapeAction">
+              <button data-value="stop">Terminer</button>
+              <button data-value="cancel">Annuler</button>
+              <button data-value="off">Rien</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Durée maximale d'une dictée</strong><span>Au-delà, elle se termine et s'écrit toute seule. La pause ne compte pas.</span></div>
+          <div class="how">
+            <select id="maxMinutes">
+              <option value="2">2 minutes</option>
+              <option value="5">5 minutes</option>
+              <option value="10">10 minutes</option>
+              <option value="15">15 minutes</option>
+              <option value="20">20 minutes</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Mode direct</strong><span>Le texte s'écrit phrase par phrase pendant que vous parlez.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="liveMode"><i></i></label></div>
+        </div>
+      </div>
+
+      <h2>Pendant la dictée</h2>
+      <div class="card">
+        <div class="row">
+          <div class="what"><strong>Micro</strong><span>Si celui-ci est indisponible, Souffle passe tout seul au suivant.</span></div>
+          <div class="how"><select id="microphone"><option value="">Micro du système</option></select></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Sons</strong><span>Un léger signal au début, à l'insertion et en cas d'erreur.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="playSounds"><i></i></label></div>
+        </div>
+        <div class="gestures">
+          <div><b>Clic</b> sur la bulle<span>pause / reprise</span></div>
+          <div><b>Clic droit</b><span>menu : terminer, pause, annuler</span></div>
+          <div><b>Glisser</b><span>la déplacer</span></div>
+          <div><b>Raccourci</b> ou <b>Échap</b><span>terminer</span></div>
+        </div>
+      </div>
+
+      <h2>Insertion du texte</h2>
+      <div class="card">
+        <div class="row">
+          <div class="what"><strong>Coller automatiquement</strong><span>Sinon, le texte reste dans le presse-papier.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="autoPaste"><i></i></label></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Revenir à l'application de départ</strong><span>Le texte va là où vous avez commencé à parler, même si vous avez changé de fenêtre.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="refocusTarget"><i></i></label></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Rendre le presse-papier après le collage</strong><span>Déconseillé : tant que le texte y reste, un collage manqué se rattrape d'un <kbd class="mod">⌘</kbd>V.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="restoreClipboard"><i></i></label></div>
+        </div>
+      </div>
+
+      <h2>Apparence et démarrage</h2>
+      <div class="card">
+        <div class="row">
+          <div class="what"><strong>Thème</strong><span>Pour la bulle et cette fenêtre.</span></div>
+          <div class="how">
+            <div class="seg" data-key="theme">
+              <button data-value="system">Système</button>
+              <button data-value="light">Clair</button>
+              <button data-value="dark">Sombre</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Lancer au démarrage</strong><span>Souffle attend discrètement dans la barre de menus.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="launchAtLogin"><i></i></label></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== Intelligence ============================== -->
+    <section class="tab" id="tab-intelligence" hidden>
+      <header class="head">
+        <h1>Intelligence</h1>
+        <p>Un modèle transcrit votre voix, un second la remet au propre.</p>
+      </header>
+
+      <h2>Clés API</h2>
+      <div class="card keys">
+        <div class="key" data-provider="groq">
+          <div class="key-head"><strong>Groq</strong><span class="pill-status" data-status="groqKey">absente</span><a href="#" data-link="https://console.groq.com/keys">console.groq.com</a></div>
+          <div class="key-row">
+            <input type="password" placeholder="gsk_…" autocomplete="off" spellcheck="false" data-secret="groqKey">
+            <button class="btn" data-test="groq">Tester</button>
+          </div>
+          <div class="key-result" data-result="groq"></div>
+        </div>
+        <div class="key" data-provider="openai">
+          <div class="key-head"><strong>OpenAI</strong><span class="pill-status" data-status="openaiKey">absente</span><a href="#" data-link="https://platform.openai.com/api-keys">platform.openai.com</a></div>
+          <div class="key-row">
+            <input type="password" placeholder="sk-…" autocomplete="off" spellcheck="false" data-secret="openaiKey">
+            <button class="btn" data-test="openai">Tester</button>
+          </div>
+          <div class="key-result" data-result="openai"></div>
+        </div>
+        <div class="key" data-provider="custom">
+          <div class="key-head"><strong>Serveur personnalisé</strong><span class="pill-status" data-status="customKey">absente</span><span class="muted">laissez vide si non requise</span></div>
+          <div class="key-row">
+            <input type="password" placeholder="clé (facultative)" autocomplete="off" spellcheck="false" data-secret="customKey">
+            <button class="btn" data-test="custom">Tester</button>
+          </div>
+          <div class="key-result" data-result="custom"></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Bascule automatique</strong><span>Si Groq est bloqué (VPN, panne, accès refusé), Souffle passe par OpenAI, et inversement. Il faut les deux clés.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="providerFallback"><i></i></label></div>
+        </div>
+      </div>
+
+      <h2>Transcription</h2>
+      <div class="card">
+        <div class="row">
+          <div class="what"><strong>Fournisseur</strong></div>
+          <div class="how">
+            <div class="seg" data-key="sttProvider">
+              <button data-value="groq">Groq</button>
+              <button data-value="openai">OpenAI</button>
+              <button data-value="custom">Personnalisé</button>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Modèle</strong><span id="sttHelp"></span></div>
+          <div class="how"><input id="sttModel" list="sttModels" spellcheck="false"><datalist id="sttModels"></datalist></div>
+        </div>
+        <div class="row" data-show="sttProvider=custom">
+          <div class="what"><strong>Adresse du serveur</strong><span>Par exemple http://localhost:8080/v1</span></div>
+          <div class="how"><input id="customSttUrl" spellcheck="false" placeholder="http://localhost:8080/v1"></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Langue parlée</strong><span>Whisper ne reconnaît qu'une langue par dictée : la forcer améliore nettement le résultat. Le menu de Souffle permet d'en changer en un clic.</span></div>
+          <div class="how">
+            <select id="language">
+              <option value="auto">Détection automatique</option>
+              <option value="fr">Français</option>
+              <option value="en">Anglais</option>
+              <option value="es">Espagnol</option>
+              <option value="de">Allemand</option>
+              <option value="it">Italien</option>
+              <option value="pt">Portugais</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <h2>Mise en forme</h2>
+      <div class="card">
+        <div class="row">
+          <div class="what"><strong>Nettoyer le texte</strong><span>Retire les « euh », ponctue, supprime les répétitions et ce que vous retirez en parlant (« non, jeudi », « oublie ça », « retiens juste… »).</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="formatEnabled"><i></i></label></div>
+        </div>
+        <div class="row" data-show="formatEnabled">
+          <div class="what"><strong>Fournisseur</strong></div>
+          <div class="how">
+            <div class="seg" data-key="llmProvider">
+              <button data-value="groq">Groq</button>
+              <button data-value="openai">OpenAI</button>
+              <button data-value="custom">Personnalisé</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" data-show="formatEnabled">
+          <div class="what"><strong>Modèle</strong><span id="llmHelp"></span></div>
+          <div class="how"><input id="llmModel" list="llmModels" spellcheck="false"><datalist id="llmModels"></datalist></div>
+        </div>
+        <div class="row" data-show="llmProvider=custom">
+          <div class="what"><strong>Adresse du serveur</strong><span>LM Studio, Ollama… compatible OpenAI.</span></div>
+          <div class="how"><input id="customLlmUrl" spellcheck="false" placeholder="http://localhost:1234/v1"></div>
+        </div>
+        <div class="row" data-show="formatEnabled">
+          <div class="what"><strong>Ton par défaut</strong><span>Réglable application par application dans Vocabulaire.</span></div>
+          <div class="how">
+            <select id="tone">
+              <option value="brut">Brut (ponctuation seule)</option>
+              <option value="neutre">Neutre</option>
+              <option value="formel">Formel</option>
+              <option value="casual">Détendu</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" data-show="formatEnabled">
+          <div class="what"><strong>Langue écrite</strong></div>
+          <div class="how">
+            <div class="seg" data-key="outputMode">
+              <button data-value="same">Celle que je parle</button>
+              <button data-value="translate">Traduire</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" data-show="outputMode=translate">
+          <div class="what"><strong>Traduire vers</strong><span>Quelle que soit la langue parlée, le texte sortira dans celle-ci.</span></div>
+          <div class="how">
+            <select id="targetLanguage">
+              <option value="fr">Français</option>
+              <option value="en">Anglais</option>
+              <option value="es">Espagnol</option>
+              <option value="de">Allemand</option>
+              <option value="it">Italien</option>
+              <option value="pt">Portugais</option>
+              <option value="nl">Néerlandais</option>
+              <option value="ar">Arabe</option>
+              <option value="zh">Chinois</option>
+              <option value="ja">Japonais</option>
+            </select>
+          </div>
+        </div>
+        <div class="row stack" data-show="formatEnabled">
+          <div class="what"><strong>Consignes personnelles</strong><span>Par exemple : « Tutoie toujours », « Écris les nombres en chiffres ».</span></div>
+          <textarea id="customInstructions" rows="3" spellcheck="false"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== Vocabulaire ============================== -->
+    <section class="tab" id="tab-vocabulary" hidden>
+      <header class="head">
+        <h1>Vocabulaire</h1>
+        <p>Ce que Souffle doit écrire correctement du premier coup.</p>
+      </header>
+      <h2>Dictionnaire</h2>
+      <div class="card">
+        <div class="row stack">
+          <div class="what"><span>Un terme par ligne : noms propres, marques, jargon. « KACHÉ » ne deviendra plus « caché ».</span></div>
+          <textarea id="dictionary" rows="6" spellcheck="false" placeholder="Alpha Agency&#10;KACHÉ"></textarea>
+        </div>
+      </div>
+      <h2>Raccourcis de texte</h2>
+      <div class="card">
+        <div class="row stack">
+          <div class="what"><span>Dites le déclencheur, Souffle écrit la valeur.</span></div>
+          <div class="pairs" id="snippets"></div>
+          <button class="btn ghost" id="addSnippet">+ Ajouter un raccourci</button>
+        </div>
+      </div>
+      <h2>Ton par application</h2>
+      <div class="card">
+        <div class="row stack">
+          <div class="what"><span>Le nom de l'application tel que le système l'affiche : Slack, Mail, Notion, Microsoft Word…</span></div>
+          <div class="pairs" id="appTones"></div>
+          <button class="btn ghost" id="addAppTone">+ Ajouter une application</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== Historique ============================== -->
+    <section class="tab" id="tab-history" hidden>
+      <header class="head with-action">
+        <div>
+          <h1>Historique</h1>
+          <p>Gardé uniquement sur cet ordinateur.</p>
+        </div>
+        <div class="confirm" id="clearBox">
+          <button class="btn ghost" id="clearHistory">Vider l'historique</button>
+        </div>
+      </header>
+      <div class="history" id="history"></div>
+    </section>
+
+    <!-- ============================== Confidentialité ============================== -->
+    <section class="tab" id="tab-privacy" hidden>
+      <header class="head">
+        <h1>Confidentialité</h1>
+        <p>Ce qui sort de l'ordinateur, et ce qui y reste.</p>
+      </header>
+      <div class="card">
+        <div class="row">
+          <div class="what"><strong>Mode confidentialité</strong><span>Rien n'est écrit sur le disque : ni historique, ni audio de secours. Un réessai reste possible tant que Souffle est ouvert.</span></div>
+          <div class="how"><label class="toggle"><input type="checkbox" id="privacyMode"><i></i></label></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Taille de l'historique</strong><span>Nombre de dictées gardées.</span></div>
+          <div class="how"><input id="historyLimit" type="number" min="10" max="2000" step="10" class="num"></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Dictées en attente</strong><span id="waitingHelp">Aucune : tout ce que vous avez dit a été transcrit.</span></div>
+          <div class="how"><button class="btn" id="retryPending" disabled>Retranscrire</button></div>
+        </div>
+      </div>
+      <div class="note">
+        <p><b>Rien ne se perd.</b> Pendant que vous parlez, l'audio s'écrit sur le disque seconde après seconde. Il n'est effacé qu'une fois le texte rangé dans l'historique : une coupure de réseau, un fournisseur qui refuse, même un plantage ne font rien perdre.</p>
+        <p>L'audio est envoyé au fournisseur choisi pour être transcrit. Les clés API sont gardées par le trousseau du système. Pour un traitement entièrement local, pointez les deux fournisseurs sur un serveur personnalisé (whisper.cpp, LM Studio, Ollama).</p>
+        <p><a href="#" id="openData">Ouvrir le dossier de Souffle</a> — réglages, historique, journal.</p>
+      </div>
+    </section>
+
+    <!-- ============================== À propos ============================== -->
+    <section class="tab" id="tab-about" hidden>
+      <header class="head">
+        <h1>À propos</h1>
+        <p>Souffle, par Alpha Agency.</p>
+      </header>
+      <div class="stats">
+        <div class="stat"><span class="num" id="statWords">0</span><span>mots dictés</span></div>
+        <div class="stat"><span class="num" id="statSessions">0</span><span>dictées</span></div>
+        <div class="stat"><span class="num" id="statSaved">0</span><span>minutes gagnées</span></div>
+      </div>
+      <h2 data-only="macos">Autorisations</h2>
+      <div class="card" data-only="macos">
+        <div class="row">
+          <div class="what"><strong>Micro</strong><span>Indispensable pour entendre votre voix.</span></div>
+          <div class="how"><span class="pill-status" id="micStatus">—</span><button class="btn" id="micButton">Autoriser</button></div>
+        </div>
+        <div class="row">
+          <div class="what"><strong>Accessibilité</strong><span>Permet à Souffle de coller le texte dans l'application où vous écrivez.</span></div>
+          <div class="how"><span class="pill-status" id="axStatus">—</span><button class="btn" id="axButton">Ouvrir les réglages</button></div>
+        </div>
+      </div>
+      <div class="note">
+        <p>Version <span id="aboutVersion">—</span>. En cas de souci, le journal <code>souffle.log</code> se trouve dans le <a href="#" id="openData2">dossier de Souffle</a>.</p>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="settings.js"></script>
+</body>
+</html>

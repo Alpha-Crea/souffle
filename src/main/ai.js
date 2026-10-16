@@ -152,10 +152,17 @@ function buildSystemPrompt(store, appName, context = '') {
     '',
     'Règles de réécriture :',
     "- Corrige l'orthographe, la grammaire, les accords et la ponctuation.",
-    "- Supprime les hésitations et tics oraux (euh, hum, ben, voilà, en fait quand c'est du remplissage).",
-    "- Quand la personne se reprend en cours de phrase, ne garde que la version finale.",
+    "- Supprime les hésitations et tics oraux (euh, hum, ben, bah, voilà, en fait, du coup, tu vois, genre) quand c'est du remplissage.",
+    "- Faux départs : quand la personne commence une phrase puis la reformule, ne garde que la dernière formulation.",
+    "- Répétitions : un mot, un bout de phrase ou une phrase dits deux fois n'apparaissent qu'une seule fois.",
+    "- Corrections : « mardi, non, jeudi » s'écrit « jeudi ». Une correction remplace ce qu'elle corrige.",
+    "- Rétractations : « oublie ça », « oublions », « laisse tomber », « je recommence », « non en fait », « efface ça »",
+    "  suppriment ce qui précède dans la même idée. « Retiens juste… », « en gros… », « bref… » annoncent la version",
+    "  à garder : écris seulement celle-là.",
+    "- Ces suppressions peuvent rendre le texte bien plus court que la parole : c'est normal et attendu.",
+    "- Ne supprime jamais une information que la personne n'a pas abandonnée. Dans le doute, garde-la.",
     '- Ajoute majuscules, accents et paragraphes.',
-    '- Obéis aux consignes orales de mise en forme : « nouveau paragraphe », « point », « entre guillemets », « en liste à puces », « efface ça ».',
+    '- Obéis aux consignes orales de mise en forme : « nouveau paragraphe », « point », « entre guillemets », « en liste à puces ».',
     `- Ton : ${TONES[tone] || TONES.neutre}`
   ];
 
@@ -215,7 +222,16 @@ function fewShot(store) {
     { role: 'user', content: WRAP("hello my name is leo who are you what's your name") },
     { role: 'assistant', content: "Hello, my name is Leo. Who are you? What's your name?" },
     { role: 'user', content: WRAP('ich heiße leo und ähm ich spreche auch deutsch') },
-    { role: 'assistant', content: 'Ich heiße Leo und ich spreche auch Deutsch.' }
+    { role: 'assistant', content: 'Ich heiße Leo und ich spreche auch Deutsch.' },
+    // Les auto-corrections en dernier : c'est le comportement le plus difficile à
+    // obtenir, et l'exemple le plus proche de la demande est celui qui pèse le plus.
+    {
+      role: 'user',
+      content: WRAP("il faudrait que tu non attends je vais le dire autrement j'ai besoin de j'ai besoin de trois choses bon oublie le début retiens juste le devis la maquette et le planning")
+    },
+    { role: 'assistant', content: "J'ai besoin de trois choses : le devis, la maquette et le planning." },
+    { role: 'user', content: WRAP('on se voit mardi non pardon jeudi à 10h enfin 10h30 pour la réunion la réunion avec le client') },
+    { role: 'assistant', content: 'On se voit jeudi à 10 h 30 pour la réunion avec le client.' }
   ];
 }
 
@@ -235,6 +251,32 @@ const META = new RegExp(
   'i'
 );
 
+/**
+ * Marqueurs par lesquels on abandonne ce qu'on vient de dire. Leur présence
+ * rend légitime un texte final beaucoup plus court que la parole.
+ */
+const RETRACTION = new RegExp(
+  [
+    'oubli(?:e|ez|ons)', 'laisse(?:z)? tomber', '(?:je|on) recommence', 'reprenons',
+    'efface(?:z)?', 'non en fait', 'en fait non', 'retiens', 'retenez', 'bref', 'en gros',
+    'je reformule', 'autrement dit', 'scratch that', 'forget (?:that|it)', 'never mind', 'let me rephrase'
+  ].map((m) => `\\b${m}\\b`).join('|'),
+  'i'
+);
+
+/** Part de mots répétés d'affilée (« j'ai dit j'ai dit ») : signe de faux départs. */
+function repetitionRatio(text) {
+  const w = text.toLowerCase().split(/\s+/).filter(Boolean);
+  if (w.length < 6) return 0;
+  let repeated = 0;
+  for (let n = 1; n <= 4; n++) {
+    for (let i = n; i + n <= w.length; i++) {
+      if (w.slice(i - n, i).join(' ') === w.slice(i, i + n).join(' ')) repeated += n;
+    }
+  }
+  return Math.min(1, repeated / w.length);
+}
+
 function looksLikeAnswer(raw, out, translating) {
   const count = (t) => t.trim().split(/\s+/).filter(Boolean).length;
   const ri = count(raw);
@@ -243,7 +285,11 @@ function looksLikeAnswer(raw, out, translating) {
   if (META.test(out)) return 'commentaire du mod\u00e8le';
   if (!translating) {
     if (ri >= 3 && ro > Math.max(ri * 2.2, ri + 20)) return 'sortie beaucoup plus longue que la parole';
-    if (ri >= 8 && ro < ri * 0.35) return 'sortie tronqu\u00e9e';
+    // Un texte final très court est le signe d'une coupure… sauf quand la personne
+    // s'est elle-même rétractée ou a multiplié les faux départs : c'est alors
+    // exactement le résultat attendu. Rejeter ce cas faisait coller la version brute.
+    const floor = RETRACTION.test(raw) ? 0.1 : repetitionRatio(raw) > 0.15 ? 0.18 : 0.25;
+    if (ri >= 8 && ro < ri * floor) return 'sortie tronqu\u00e9e';
   } else if (ri >= 3 && ro > Math.max(ri * 3, ri + 40)) {
     return 'traduction beaucoup plus longue que la parole';
   }
@@ -305,4 +351,4 @@ async function testKey({ provider, key, customUrl }) {
   return Array.isArray(data.data) ? data.data.length : 0;
 }
 
-module.exports = { transcribe, format, testKey, TONES, LANGUAGES, buildSystemPrompt, looksLikeAnswer };
+module.exports = { transcribe, format, testKey, TONES, LANGUAGES, buildSystemPrompt, looksLikeAnswer, RETRACTION, repetitionRatio };

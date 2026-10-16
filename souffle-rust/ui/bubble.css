@@ -1,0 +1,225 @@
+/* La bulle : verre liquide, halo arc-en-ciel qui suit la voix, aucune ombre.
+ *
+ * Sur macOS, le verre est dessiné par le système derrière la page
+ * (NSGlassEffectView, ou le flou des menus) : la page n'ajoute qu'une teinte et
+ * des liserés de lumière. Ailleurs, une glace dépolie dessinée ici la remplace.
+ *
+ * Économie de GPU : tout ce qui bouge passe par transform et opacity, que le
+ * compositeur anime sans repeindre la page. Rien ne tourne au repos. */
+
+:root {
+  --ink: #1b1a20;
+  --ink-soft: rgba(27, 26, 32, 0.58);
+  --tint: 236, 240, 250;
+  --tint-a: 0.30;
+  --fallback: rgba(246, 247, 251, 0.90);
+  --edge-top: rgba(255, 255, 255, 0.95);
+  --edge-bottom: rgba(38, 50, 92, 0.22);
+  --edge-line: rgba(30, 42, 78, 0.12);
+  --error: #d70015;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #ffffff;
+    --ink-soft: rgba(255, 255, 255, 0.66);
+    --tint: 22, 18, 34;
+    --tint-a: 0.24;
+    --fallback: rgba(28, 25, 38, 0.90);
+    --edge-top: rgba(255, 255, 255, 0.55);
+    --edge-bottom: rgba(255, 255, 255, 0.10);
+    --edge-line: rgba(255, 255, 255, 0.16);
+    --error: #ff6b61;
+    color-scheme: dark;
+  }
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.pill {
+  --lvl: 0;
+  position: absolute;
+  inset: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px 0 18px;
+  border-radius: 30px;
+  color: var(--ink);
+  font: 13px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  isolation: isolate;
+  /* Teinte posée sur le verre du système, et liserés qui dessinent la forme. */
+  background: rgba(var(--tint), var(--tint-a));
+  box-shadow:
+    inset 0 1px 0.5px var(--edge-top),
+    inset 0 -8px 14px -10px var(--edge-bottom),
+    inset 0 0 0 1px var(--edge-line);
+}
+/* Sans verre du système : glace dépolie dessinée ici. */
+.no-glass .pill { background: var(--fallback); }
+
+.pill[data-state="recording"],
+.pill[data-state="paused"] { cursor: grab; }
+.pill.dragging { cursor: grabbing; }
+.pill[data-retry="1"] { cursor: pointer; }
+
+/* Reflet qui ondule lentement à la surface du verre (uniquement en écoute). */
+.sheen {
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+.sheen::before {
+  content: "";
+  position: absolute;
+  top: -60%;
+  left: -40%;
+  width: 70%;
+  height: 160%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.30), transparent);
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+.pill[data-state="recording"] .sheen::before {
+  opacity: 1;
+  animation: drift 9s ease-in-out infinite;
+}
+@keyframes drift {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(150%); }
+}
+
+/* ---------- Halo arc-en-ciel ----------
+ * Un anneau masqué (le masque ne bouge pas) au travers duquel tourne un
+ * disque de couleurs (seule la rotation s'anime). */
+.halo, .ring {
+  position: absolute;
+  border-radius: 30px;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+.halo {
+  inset: 0;
+  padding: 1.4px;
+  opacity: calc(0.40 + var(--lvl) * 0.30);
+  transition: opacity 140ms linear;
+}
+.glow {
+  position: absolute;
+  inset: -3px;
+  z-index: -2;
+  pointer-events: none;
+  filter: blur(7px);
+  opacity: calc(var(--lvl) * 0.34);
+  transition: opacity 140ms linear;
+  will-change: opacity;
+}
+.ring { inset: 0; padding: 3px; }
+.spin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 320px;
+  height: 320px;
+  margin: -160px 0 0 -160px;
+  background: conic-gradient(#ff6b3d, #ff3d8b, #b86bff, #4d8dff, #36d6ff, #ffd23d, #ff6b3d);
+  will-change: transform;
+}
+.pill[data-state="recording"] .spin,
+.pill[data-state="working"] .spin { animation: spin 5s linear infinite; }
+.pill[data-state="working"] .spin { animation-duration: 1.6s; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.pill[data-state="idle"] .halo,
+.pill[data-state="idle"] .glow { opacity: 0; }
+.pill[data-state="paused"] .halo { opacity: 0.30; }
+.pill[data-state="paused"] .glow { opacity: 0; }
+.pill[data-state="working"] .halo { opacity: 0.55; }
+.pill[data-state="done"] .halo { opacity: 0.45; }
+.pill[data-state="error"] .spin {
+  background: conic-gradient(#ff453a, #ff7a6b, #ff2d55, #ff453a);
+}
+.pill[data-state="error"] .halo { opacity: 0.75; }
+
+/* ---------- Glyphe : onde, roue, coche, croix ---------- */
+.glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 28px;
+  flex: none;
+}
+.bars { display: flex; align-items: center; gap: 2.5px; height: 28px; }
+.bars span {
+  display: block;
+  width: 3px;
+  height: 24px;
+  border-radius: 3px;
+  background: var(--ink);
+  transform: scaleY(0.22);
+  transition: transform 90ms linear;
+  will-change: transform;
+}
+.pill[data-state="paused"] .bars { opacity: 0.5; }
+.icon {
+  display: none;
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pill[data-state="working"] .bars,
+.pill[data-state="done"] .bars,
+.pill[data-state="error"] .bars { display: none; }
+.pill[data-state="working"] .i-spin { display: block; stroke-dasharray: 38 20; animation: rot 900ms linear infinite; }
+.pill[data-state="done"] .i-check { display: block; }
+.pill[data-state="error"] .i-cross { display: block; stroke: var(--error); }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+.text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.label {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hint {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.timer {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.pill[data-state="working"] .timer,
+.pill[data-state="done"] .timer,
+.pill[data-state="error"] .timer { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin, .sheen::before { animation: none !important; }
+}

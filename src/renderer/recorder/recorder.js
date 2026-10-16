@@ -25,6 +25,9 @@ let levelTimer = null;
 let live = false;
 let cancelled = false;
 let stopping = false; // arrêt définitif demandé par l'utilisateur
+let paused = false; // pause : la capture est suspendue, la dictée continue
+let segmentClosing = false; // un segment est en train de se refermer (onstop pas encore reçu)
+let lastSend = Promise.resolve(); // envoi du dernier segment, pour garder l'ordre
 let segmentStartedAt = 0;
 
 /* Détection de fin de phrase */
@@ -312,7 +315,7 @@ function startLevelMeter() {
     // Compression douce : la voix normale remplit la barre sans saturer.
     window.souffle.sendLevel(Math.min(1, Math.pow(rms * 4.2, 0.7)));
 
-    if (!live || stopping || cancelled) return;
+    if (!live || stopping || cancelled || paused) return;
 
     if (rms >= SILENCE_RMS) {
       speechMs += TICK_MS;
@@ -365,7 +368,12 @@ function cutSegment() {
   if (recorder && recorder.state === 'recording') recorder.stop();
 }
 
-async function handleSegmentEnd() {
+function handleSegmentEnd() {
+  lastSend = sendSegment();
+}
+
+async function sendSegment() {
+  segmentClosing = false;
   const durationMs = Date.now() - segmentStartedAt;
   const parts = chunks;
   // On lit le type MAINTENANT : beginSegment() va remplacer `recorder` juste après.
@@ -378,12 +386,15 @@ async function handleSegmentEnd() {
   }
 
   const blob = new Blob(parts, { type: mime });
-  const isFinal = !live || stopping;
-  log(`${isFinal ? 'enregistrement terminé' : 'phrase envoyée'} : ${blob.size} octets en ${durationMs} ms`);
+  const isFinal = stopping;
+  // En mode classique, un segment refermé par une pause est un morceau de la
+  // dictée, pas sa fin : il est transcrit et versé dans l'historique tout de suite.
+  const pausePart = !live && paused && !stopping;
+  log(`${isFinal ? 'enregistrement terminé' : pausePart ? 'morceau avant pause' : 'phrase envoyée'} : ${blob.size} octets en ${durationMs} ms`);
 
   // En mode direct, on relance la capture AVANT l'envoi réseau : le blanc
   // entre deux phrases doit être aussi court que possible.
-  if (live && !stopping) beginSegment();
+  if (live && !stopping && !paused) beginSegment();
 
   const buffer = new Uint8Array(await blob.arrayBuffer());
   window.souffle.sendAudio({
@@ -391,14 +402,39 @@ async function handleSegmentEnd() {
     mime,
     durationMs,
     segment: live,
-    final: isFinal
+    final: isFinal,
+    pausePart
   });
+}
+
+/** Referme le segment en cours ; son envoi suit dans handleSegmentEnd. */
+function closeSegment() {
+  if (recorder && recorder.state === 'recording') {
+    segmentClosing = true;
+    recorder.stop();
+  }
+}
+
+function pause() {
+  if (paused || stopping) return;
+  paused = true;
+  closeSegment();
+  log('pause');
+}
+
+function resume() {
+  if (!paused || stopping) return;
+  paused = false;
+  beginSegment();
+  log('reprise');
 }
 
 async function start(opts = {}) {
   try {
     cancelled = false;
     stopping = false;
+    paused = false;
+    segmentClosing = false;
     live = Boolean(opts.live);
     chunks = [];
 
@@ -422,15 +458,28 @@ function stop() {
   scheduleRelease();
   if (recorder && recorder.state === 'recording') {
     recorder.stop();
+  } else if (segmentClosing) {
+    // Arrêt juste après une pause : le segment en train de se refermer partira
+    // marqué « dernier » (stopping est vrai). Rien d'autre à envoyer.
+    log('arrêt pendant la fermeture du segment');
+  } else if (paused) {
+    // Arrêt pendant la pause : plus rien n'enregistre, mais la dictée a déjà ses
+    // morceaux. On signale sa fin, après le dernier envoi pour garder l'ordre.
+    log('arrêt pendant la pause');
+    lastSend.then(() =>
+      window.souffle.sendAudio({ buffer: new Uint8Array(0), mime: MIME || 'audio/webm', durationMs: 0, segment: live, final: true })
+    );
   } else {
     log('arrêt demandé mais aucun enregistrement en cours (état =', recorder?.state || 'néant', ')');
     window.souffle.sendError('La capture n’avait pas démarré');
   }
+  paused = false;
 }
 
 function cancel() {
   cancelled = true;
   stopping = true;
+  paused = false;
   stopLevelMeter();
   scheduleRelease();
   if (recorder && recorder.state === 'recording') recorder.stop();
@@ -440,4 +489,6 @@ function cancel() {
 window.souffle.onStart(start);
 window.souffle.onStop(stop);
 window.souffle.onCancel(cancel);
+window.souffle.onPause(pause);
+window.souffle.onResume(resume);
 log('fenêtre de capture prête');

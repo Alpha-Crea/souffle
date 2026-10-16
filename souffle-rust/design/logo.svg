@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#2a2140"/>
+      <stop offset="1" stop-color="#0e0c16"/>
+    </linearGradient>
+    <clipPath id="sq">
+      <path d="M512 100 C 810 100 924 214 924 512 C 924 810 810 924 512 924 C 214 924 100 810 100 512 C 100 214 214 100 512 100 Z"/>
+    </clipPath>
+    <filter id="blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="70"/></filter>
+    <filter id="glow" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
+    <linearGradient id="rainbow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff6b3d"/>
+      <stop offset="0.22" stop-color="#ff3d8b"/>
+      <stop offset="0.45" stop-color="#b86bff"/>
+      <stop offset="0.68" stop-color="#4d8dff"/>
+      <stop offset="0.86" stop-color="#36d6ff"/>
+      <stop offset="1" stop-color="#ffd23d"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <!-- Lumières colorées derrière le verre -->
+    <g filter="url(#blur)" opacity="0.75">
+      <circle cx="300" cy="330" r="170" fill="#ff5a3d"/>
+      <circle cx="730" cy="320" r="170" fill="#6b5cff"/>
+      <circle cx="540" cy="760" r="200" fill="#ff3d8b"/>
+    </g>
+  </g>
+  <!-- La bulle : capsule de verre, halo arc-en-ciel -->
+  <rect x="172" y="362" width="680" height="300" rx="150" fill="url(#rainbow)" filter="url(#glow)" opacity="0.55"/>
+  <rect x="172" y="362" width="680" height="300" rx="150" fill="url(#glass)"/>
+  <rect x="179" y="369" width="666" height="286" rx="143" fill="none" stroke="url(#rainbow)" stroke-width="14"/>
+  <path d="M260 392 H 764" stroke="#ffffff" stroke-opacity="0.55" stroke-width="5" stroke-linecap="round"/>
+  <!-- L'onde audio -->
+  <g stroke="#ffffff" stroke-linecap="round" stroke-width="44">
+    <path d="M362 470 V 554"/>
+    <path d="M437 432 V 592"/>
+    <path d="M512 404 V 620"/>
+    <path d="M587 432 V 592"/>
+    <path d="M662 470 V 554"/>
+  </g>
+</svg>

@@ -18,13 +18,14 @@ html, body {
   gap: 12px;
   padding: 0 16px;
   border-radius: 999px;
-  background: rgba(18, 20, 26, 0.86);
-  backdrop-filter: blur(24px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  /* Ni ombre portée ni flou : dans une fenêtre transparente, le flou CSS ne
+     floute rien (Chromium ne voit pas les fenêtres derrière) et coûtait du GPU
+     pour rien. Le vrai verre arrive avec la version native. */
+  background: rgba(18, 20, 26, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.10);
   color: #f4f5f7;
   animation: rise 220ms cubic-bezier(0.2, 0.9, 0.25, 1);
-  transition: border-color 200ms ease, box-shadow 200ms ease;
+  transition: border-color 200ms ease;
 }
 
 @keyframes rise {
@@ -107,9 +108,18 @@ html, body {
 /* ---------- états ---------- */
 
 .pill[data-state="recording"] .timer { opacity: 1; }
-.pill[data-state="recording"] { border-color: rgba(56, 189, 248, 0.35); cursor: pointer; }
+.pill[data-state="recording"] { border-color: rgba(56, 189, 248, 0.35); cursor: grab; }
 .pill[data-state="recording"]:hover { border-color: rgba(56, 189, 248, 0.7); }
-.pill[data-state="recording"]:active { transform: scale(0.985); }
+
+/* Pause : chrono figé, barres éteintes, bordure neutre */
+.pill[data-state="paused"] .timer { opacity: 1; }
+.pill[data-state="paused"] { border-color: rgba(255, 255, 255, 0.28); cursor: grab; }
+.pill[data-state="paused"]:hover { border-color: rgba(255, 255, 255, 0.5); }
+.pill[data-state="paused"] .bars { opacity: 0.45; }
+
+.pill.dragging { cursor: grabbing; }
+.pill[data-retry="1"] { cursor: pointer; }
+.pill[data-retry="1"]:hover { border-color: rgba(248, 113, 113, 0.75); }
 
 .pill[data-state="working"] .bars { opacity: 0; }
 .pill[data-state="working"] .spinner { opacity: 1; animation: spin 900ms linear infinite; }

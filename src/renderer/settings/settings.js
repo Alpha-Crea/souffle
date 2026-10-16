@@ -254,7 +254,13 @@ async function renderHistory() {
     const meta = document.createElement('div');
     meta.className = 'meta';
     const when = new Date(it.at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-    meta.textContent = [when, it.app, `${it.words} mots`].filter(Boolean).join(' · ');
+    meta.textContent = [
+      when,
+      it.app,
+      `${it.words} mots`,
+      it.partial ? 'en pause, non terminée' : '',
+      it.recovered ? 'rattrapée' : ''
+    ].filter(Boolean).join(' · ');
 
     const body = document.createElement('div');
     body.className = 'body';
@@ -357,6 +363,8 @@ async function init() {
   simple.forEach((k) => bind(k, k));
   TOGGLES.forEach((k) => bind(k, k, { type: 'checked' }));
   bind('historyLimit', 'historyLimit', { parse: (v) => Math.max(0, parseInt(v, 10) || 0) });
+  $('maxMinutes').value = String(cfg.maxMinutes ?? 10);
+  bind('maxMinutes', 'maxMinutes', { parse: (v) => parseInt(v, 10) || 10 });
   bind('dictionary', 'dictionary', {
     parse: (v) => v.split('\n').map((s) => s.trim()).filter(Boolean)
   });

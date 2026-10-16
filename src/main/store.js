@@ -15,6 +15,7 @@ const DEFAULTS = {
   mode: 'toggle', // 'toggle' | 'hold'  (hold nécessite uiohook-napi)
   escapeAction: 'stop', // Échap pendant la dictée : 'stop' | 'cancel' | 'off'
   liveMode: false, // écriture phrase par phrase pendant qu'on parle
+  maxMinutes: 10, // durée maximale d'une dictée ; le temps en pause ne compte pas
   playSounds: true,
   autoPaste: true,
   // Restaurer l'ancien presse-papier après le collage fait perdre la dictée dès

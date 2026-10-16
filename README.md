@@ -8,6 +8,10 @@ ponctuation, reprises en cours de phrase, ton adapté à l'application active).
 
 ---
 
+> **Version native** — le dossier [`souffle-rust/`](souffle-rust/) contient la réécriture en Rust
+> (Tauri) : même comportement, quelques mégaoctets au lieu de 250, bulle en verre dessinée par
+> macOS, thème clair/sombre. Elle reprend les réglages et l'historique de cette version-ci.
+
 ## Démarrage
 
 ```bash
@@ -25,8 +29,16 @@ Appuyez, parlez, puis terminez comme vous voulez :
 |---|---|
 | Ré-appuyer sur le raccourci | Terminer et écrire |
 | `Échap` | Terminer et écrire (configurable en « annuler ») |
-| Clic sur la pilule | Terminer et écrire |
+| Clic sur la pilule | Pause / reprise (ce qui est dit avant la pause est déjà dans l'historique) |
 | Clic droit sur la pilule | Annuler |
+| Glisser la pilule | La déplacer ; la position est retenue (menu : *Replacer la bulle au centre*) |
+
+Une dictée dure jusqu'à 10 minutes par défaut (réglable de 2 à 20 minutes, la pause ne compte pas).
+
+**Rien n'est jamais perdu** — chaque morceau d'audio est gardé (dans `en-attente/`, sauf en mode
+confidentialité) jusqu'à ce que son texte soit dans l'historique. Si le fournisseur refuse ou si le
+réseau tombe, cliquez sur la pilule ou utilisez *Réessayer la dernière dictée* dans le menu ; après
+un plantage, *Retranscrire les dictées en attente* récupère ce qui restait.
 
 > Souffle n'enregistre jamais de raccourci sans modificateur. Sur macOS, enregistrer une touche
 > nue comme `Échap` pendant qu'un autre raccourci est actif casse le gestionnaire de hotkeys du
