@@ -88,15 +88,27 @@ ne prend rien au passage.
 1. Vous placez votre curseur là où le texte doit aller.
 2. Vous appuyez sur le raccourci — une petite pilule apparaît en bas de l'écran.
 3. Vous parlez.
-4. Vous ré-appuyez sur le raccourci (ou vous appuyez sur `Échap`, ou vous cliquez sur la pilule).
+4. Vous ré-appuyez sur le raccourci (ou vous appuyez sur `Échap`).
 5. Une seconde ou deux plus tard, le texte propre s'écrit à l'endroit voulu.
+
+**Pendant que vous parlez** : un clic sur la pilule met en pause (ce que vous avez déjà dit part
+tout de suite dans l'historique), un second clic reprend. Clic droit : annuler. Vous pouvez aussi
+la faire glisser où vous voulez sur l'écran ; elle s'en souviendra. Une dictée peut durer jusqu'à
+10 minutes (réglable jusqu'à 20).
+
+**Vous pouvez vous reprendre en parlant** : « mardi, non, jeudi », « oublie ça », « bon, retiens
+juste… », les mots répétés et les débuts de phrase abandonnés disparaissent du texte final.
 
 Souffle vit dans la barre de menus (macOS) ou la zone de notification (Windows). Il ne prend pas de
 place dans le dock, il n'ouvre aucune fenêtre, et il ne vous vole jamais le focus.
 
 **Si le collage rate** — vous avez changé de fenêtre entre-temps, l'application n'a pas de champ de
-saisie — le texte reste dans le presse-papier : un simple `⌘V` (ou `Ctrl+V`) le récupère. Rien n'est
-jamais perdu.
+saisie — le texte reste dans le presse-papier : un simple `⌘V` (ou `Ctrl+V`) le récupère.
+
+**Si la transcription échoue** — réseau coupé, VPN qui bloque, fournisseur qui refuse — l'audio est
+gardé. Cliquez sur la pilule rouge pour réessayer, ou plus tard via le menu de Souffle
+(« Réessayer la dernière dictée »). Même après un plantage, ce que vous avez dit est retranscrit au
+redémarrage, dans l'historique.
 
 ## Quelques réglages qui valent le détour
 

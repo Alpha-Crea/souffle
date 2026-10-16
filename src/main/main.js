@@ -21,6 +21,7 @@ const {
 
 const { Store } = require('./store');
 const { History } = require('./history');
+const { Pending } = require('./pending');
 const { transcribe, format, testKey } = require('./ai');
 const inject = require('./inject');
 
@@ -29,6 +30,7 @@ const ICONS = path.join(__dirname, '..', '..', 'build');
 
 let store;
 let history;
+let pending;
 let tray = null;
 let overlayWin = null;
 let recorderWin = null;
@@ -40,13 +42,13 @@ let recordingStartedAt = 0;
 let targetApp = '';
 /** Numéro de la dictée en cours : sert à ignorer les réponses tardives. */
 let recordingId = 0;
-let abortCtl = null;
 let uiohook = null;
 let captureWatchdog = null;
 let maxDurationTimer = null;
 
 const DIAG = process.argv.includes('--diag');
-const MAX_RECORDING_MS = 120000;
+/** Durée maximale d'une dictée par défaut, en minutes (réglable de 2 à 20). */
+const DEFAULT_MAX_MINUTES = 10;
 // Délai sans le moindre signe de vie de la fenêtre de capture. Ouvrir le micro
 // peut demander plusieurs essais : c'est chaque essai qui réarme ce compte.
 const CAPTURE_WATCHDOG_MS = 3500;
@@ -143,6 +145,15 @@ function overlayBounds() {
   const w = 300;
   const h = 74;
   const { x, y, width, height } = display.workArea;
+  const saved = store.get('overlayPosition');
+  if (saved && Number.isFinite(saved.fx) && Number.isFinite(saved.fy)) {
+    return {
+      x: Math.round(x + Math.min(1, Math.max(0, saved.fx)) * (width - w)),
+      y: Math.round(y + Math.min(1, Math.max(0, saved.fy)) * (height - h)),
+      width: w,
+      height: h
+    };
+  }
   return {
     x: Math.round(x + (width - w) / 2),
     y: Math.round(y + height - h - 48),
@@ -164,7 +175,10 @@ function createOverlayWindow() {
     hasShadow: false,
     alwaysOnTop: true,
     fullscreenable: false,
-    acceptFirstMouse: false,
+    // Sans ça, sur macOS, le premier clic sur une fenêtre inactive ne sert qu'à
+    // l'activer : le clic de pause serait perdu. focusable: false garantit que
+    // la pilule ne vole jamais le focus pour autant.
+    acceptFirstMouse: true,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'overlay.js'),
       contextIsolation: true,
@@ -239,6 +253,29 @@ function setState(next, payload = {}) {
   updateTray();
 }
 
+/**
+ * Temps de parole d'une dictée. La limite de durée ne compte que lui : le temps
+ * passé en pause est exclu, sans quoi une longue pause terminerait la dictée.
+ */
+let spokenMs = 0;
+let runStartedAt = 0;
+
+function maxRecordingMs() {
+  const m = Number(store.get('maxMinutes'));
+  return (Number.isFinite(m) && m >= 1 && m <= 60 ? m : DEFAULT_MAX_MINUTES) * 60000;
+}
+
+function armMaxDuration() {
+  clearTimeout(maxDurationTimer);
+  const remaining = Math.max(1000, maxRecordingMs() - spokenMs);
+  maxDurationTimer = setTimeout(() => {
+    if (state === 'recording') {
+      log(`durée maximale atteinte (${Math.round(maxRecordingMs() / 60000)} min), arrêt automatique`);
+      stopRecording();
+    }
+  }, remaining);
+}
+
 async function startRecording() {
   if (state !== 'idle' && state !== 'done' && state !== 'error') {
     log(`démarrage ignoré (état = ${state})`);
@@ -275,6 +312,7 @@ async function startRecording() {
   liveContext = '';
   const thisRecording = ++recordingId;
   const live = Boolean(store.get('liveMode'));
+  const d = (dictation = newDictation(live));
   setState('recording', { live });
   showOverlay();
   log(`capture demandée${live ? ' (mode direct)' : ''}`);
@@ -290,6 +328,7 @@ async function startRecording() {
       return;
     }
     targetApp = name;
+    d.app = name;
     log('application cible =', name || '(inconnue)');
   });
 
@@ -297,25 +336,24 @@ async function startRecording() {
   // laisse pas la pilule tourner dans le vide indéfiniment.
   armCaptureWatchdog();
 
-  clearTimeout(maxDurationTimer);
-  maxDurationTimer = setTimeout(() => {
-    if (state === 'recording') {
-      log('durée maximale atteinte, arrêt automatique');
-      stopRecording();
-    }
-  }, MAX_RECORDING_MS);
+  spokenMs = 0;
+  runStartedAt = Date.now();
+  armMaxDuration();
 
-  // Pendant la dictée, la pilule devient cliquable : clic = terminer, clic droit = annuler.
+  // Pendant la dictée, la pilule devient cliquable : clic = pause, clic droit = annuler,
+  // glisser = déplacer.
   overlayWin?.setIgnoreMouseEvents(false);
 
   ensureMainShortcut();
 }
 
 function stopRecording() {
-  if (state !== 'recording') {
+  if (state !== 'recording' && state !== 'paused') {
     log(`arrêt ignoré (état = ${state})`);
     return;
   }
+  if (runStartedAt) spokenMs += Date.now() - runStartedAt;
+  runStartedAt = 0;
   log('arrêt demandé après', Math.round((Date.now() - recordingStartedAt) / 100) / 10, 's');
   clearTimeout(captureWatchdog);
   clearTimeout(maxDurationTimer);
@@ -334,7 +372,14 @@ function cancelRecording() {
   clearTimeout(maxDurationTimer);
   overlayWin?.setIgnoreMouseEvents(true);
   stopEscapeWatch();
-  if (abortCtl) abortCtl.abort();
+  if (dictation) {
+    dictation.cancelled = true;
+    dictation.abort.abort();
+    // Annuler est un choix : l'audio est oublié. Un texte déjà versé dans
+    // l'historique par une pause, lui, y reste.
+    pending.forget(dictation.id);
+  }
+  runStartedAt = 0;
   sendToRecorder('recorder:cancel');
   setState('idle');
   hideOverlay(150);
@@ -352,14 +397,76 @@ function ensureMainShortcut() {
   registerShortcut();
 }
 
-/* Arrêt et annulation depuis la pilule, sans dépendre du clavier. */
+/* ---------- Pause ---------- */
+
+/**
+ * La pause suspend l'enregistrement sans terminer la dictée. Ce qui a été dit
+ * jusque-là est transcrit aussitôt et versé dans l'historique : une dictée
+ * laissée en pause n'est jamais perdue.
+ */
+function pauseRecording() {
+  if (state !== 'recording') return;
+  if (runStartedAt) spokenMs += Date.now() - runStartedAt;
+  runStartedAt = 0;
+  clearTimeout(maxDurationTimer);
+  sendToRecorder('recorder:pause');
+  setState('paused', { live: dictation?.live });
+  log('pause');
+}
+
+function resumeRecording() {
+  if (state !== 'paused') return;
+  runStartedAt = Date.now();
+  armMaxDuration();
+  sendToRecorder('recorder:resume');
+  setState('recording', { live: dictation?.live, resumed: true });
+  log('reprise');
+}
+
+function togglePause() {
+  if (state === 'recording') pauseRecording();
+  else if (state === 'paused') resumeRecording();
+}
+
+/* Pause, arrêt et annulation depuis la pilule, sans dépendre du clavier. */
+ipcMain.on('overlay:toggle-pause', togglePause);
 ipcMain.on('overlay:stop', stopRecording);
 ipcMain.on('overlay:cancel', cancelRecording);
+
+/* ---------- Déplacement de la pilule ---------- */
+
+let dragOrigin = null;
+const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+ipcMain.on('overlay:drag-start', (_e, { screenX, screenY }) => {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  const [x, y] = overlayWin.getPosition();
+  dragOrigin = { x, y, sx: screenX, sy: screenY };
+});
+ipcMain.on('overlay:drag-move', (_e, { screenX, screenY }) => {
+  if (!dragOrigin || !overlayWin || overlayWin.isDestroyed()) return;
+  overlayWin.setPosition(Math.round(dragOrigin.x + screenX - dragOrigin.sx), Math.round(dragOrigin.y + screenY - dragOrigin.sy));
+});
+ipcMain.on('overlay:drag-end', () => {
+  if (!dragOrigin || !overlayWin || overlayWin.isDestroyed()) return;
+  dragOrigin = null;
+  // Position gardée en proportion de l'écran : la pilule revient au même
+  // endroit relatif, quel que soit l'écran où commence la dictée suivante.
+  const b = overlayWin.getBounds();
+  const wa = screen.getDisplayMatching(b).workArea;
+  store.set({
+    overlayPosition: {
+      fx: clamp01((b.x - wa.x) / Math.max(1, wa.width - b.width)),
+      fy: clamp01((b.y - wa.y) / Math.max(1, wa.height - b.height))
+    }
+  });
+  log('pilule déplacée et mémorisée');
+});
 
 function toggleRecording() {
   log(`raccourci reçu (état = ${state})`);
   try {
-    if (state === 'recording') stopRecording();
+    if (state === 'recording' || state === 'paused') stopRecording();
     else startRecording().catch(onFatal);
   } catch (err) {
     onFatal(err);
@@ -374,13 +481,21 @@ function toggleRecording() {
  * pilule restait cliquable. Chaque appelant ne choisit plus que son message et
  * le temps d'affichage.
  */
-function fail(message, ms = 3000) {
+let errorSeq = 0;
+function fail(message, ms = 3000, { retry = false } = {}) {
   stopEscapeWatch();
   clearTimeout(captureWatchdog);
   clearTimeout(maxDurationTimer);
-  overlayWin?.setIgnoreMouseEvents(true);
-  setState('error', { message: String(message).slice(0, 60) });
+  runStartedAt = 0;
+  // Une erreur rattrapable laisse la pilule cliquable : un clic relance la dictée.
+  overlayWin?.setIgnoreMouseEvents(!retry);
+  setState('error', { message: String(message).slice(0, 60), retry });
+  // Chaque erreur porte son numéro. Sans lui, la minuterie d'une ancienne erreur
+  // remettait l'application au repos en pleine dictée suivante, pilule masquée.
+  const seq = ++errorSeq;
   setTimeout(() => {
+    if (seq !== errorSeq || state !== 'error') return;
+    overlayWin?.setIgnoreMouseEvents(true);
     setState('idle');
     hideOverlay(0);
   }, ms);
@@ -433,7 +548,254 @@ ipcMain.on('recorder:started', () => {
 /* ------------------------------------------------------------------ */
 
 /**
- * File d'attente d'insertion.
+ * Une dictée arrive en un ou plusieurs morceaux d'audio : un par pause en mode
+ * classique, un par phrase en mode direct. Chaque morceau passe d'abord par la
+ * file de sécurité (mémoire + disque), puis par la transcription. Son audio
+ * n'est oublié qu'une fois le texte versé dans l'historique.
+ */
+let dictation = null;
+/** Dernière dictée en échec, gardée pour « Réessayer ». */
+let failedDictation = null;
+
+function newDictation(live) {
+  return {
+    id: `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    live,
+    app: '',
+    parts: 0,
+    raws: [],
+    durationMs: 0,
+    chain: Promise.resolve(),
+    abort: new AbortController(),
+    failed: null,
+    failedParts: [],
+    liveText: '',
+    cancelled: false
+  };
+}
+
+const keepsHistory = () => !store.get('privacyMode');
+const countWords = (t) => t.split(/\s+/).filter(Boolean).length;
+const isAbort = (err) => err && (err.name === 'AbortError' || err.code === 'ABORT_ERR');
+
+ipcMain.on('recorder:audio', (_e, payload) => {
+  const d = dictation;
+  if (!d || d.cancelled) {
+    log('audio reçu hors dictée, ignoré');
+    return;
+  }
+  const bytes = payload.buffer ? payload.buffer.byteLength : 0;
+  const hasAudio = bytes > 0 && payload.durationMs >= 350;
+  log(`audio reçu (${d.live ? 'phrase' : payload.pausePart ? 'morceau avant pause' : 'dictée'}) : ${bytes} octets, ${payload.durationMs} ms${payload.final ? ', dernier' : ''}`);
+
+  let part = -1;
+  if (hasAudio) {
+    part = d.parts++;
+    d.durationMs += payload.durationMs;
+    pending.save(d.id, part, payload, { live: d.live, app: d.app }, keepsHistory());
+  }
+  if (d.live) onLiveSegment(d, part, payload);
+  else onClassicPart(d, part, payload);
+});
+
+/* ---------- Mode classique : morceaux transcrits un à un, remis en forme ensemble ---------- */
+
+function onClassicPart(d, part, payload) {
+  if (part >= 0) {
+    const audio = { buffer: payload.buffer, mime: payload.mime };
+    d.chain = d.chain.then(() => transcribePart(d, part, audio));
+  }
+  if (payload.pausePart) {
+    d.chain = d.chain.then(() => savePartial(d));
+  } else if (payload.final) {
+    d.chain = d.chain.then(() => finishClassic(d, { paste: true }));
+  }
+}
+
+async function transcribePart(d, part, { buffer, mime }) {
+  if (d.failed || d.cancelled) return;
+  try {
+    const t0 = Date.now();
+    // Le texte des morceaux précédents sert d'amorce : la transcription garde le fil d'une pause à l'autre.
+    const context = d.raws.filter(Boolean).join(' ').slice(-600);
+    const raw = await transcribe({ audio: Buffer.from(buffer), mime, store, signal: d.abort.signal, context });
+    d.raws[part] = raw || '';
+    log(`transcription morceau ${part + 1} (${Date.now() - t0} ms) :`, JSON.stringify(raw));
+  } catch (err) {
+    if (isAbort(err)) {
+      d.cancelled = true;
+      return;
+    }
+    d.failed = err;
+    log('ERREUR transcription :', err.message || err);
+  }
+}
+
+/** Pause : ce qui a été dit jusque-là entre tout de suite dans l'historique. */
+function savePartial(d) {
+  if (d.failed || d.cancelled || !keepsHistory()) return;
+  const raw = d.raws.filter(Boolean).join(' ').trim();
+  if (!raw) return;
+  history.upsert(d.id, { raw, text: raw, app: d.app, words: countWords(raw), partial: true }, store.get('historyLimit'));
+  log('pause : texte provisoire versé dans l’historique');
+}
+
+async function finishClassic(d, { paste }) {
+  // Un arrêt pendant la fermeture d'un segment peut annoncer deux fois la fin :
+  // la dictée ne doit être collée qu'une fois.
+  if (d.cancelled || d.finished) return;
+  d.finished = true;
+  if (d.failed) {
+    d.finished = false;
+    return onDictationFailed(d);
+  }
+
+  const raw = d.raws.filter(Boolean).join(' ').trim();
+  if (!raw) {
+    pending.forget(d.id);
+    if (dictation === d) fail('Rien entendu', 1800);
+    return;
+  }
+
+  if (dictation === d) setState('working', { step: 'mise en forme' });
+  const t1 = Date.now();
+  // Une seule remise en forme pour toute la dictée : une correction dite après
+  // la pause (« oublie ce que j'ai dit avant ») s'applique aussi à ce qui précède.
+  const text = await format({ text: raw, store, appName: d.app, signal: d.abort.signal });
+  if (d.cancelled) return;
+  log(`mise en forme (${Date.now() - t1} ms) :`, JSON.stringify(text));
+  await deliverDictation(d, { raw, text }, { paste });
+}
+
+/** Le texte est prêt : historique d'abord, collage ensuite, audio oublié en dernier. */
+async function deliverDictation(d, { raw, text }, { paste }) {
+  const words = countWords(text);
+  if (keepsHistory()) {
+    // Les phrases rattrapées d'une dictée directe ont leur propre entrée : celle
+    // de la dictée contient déjà les phrases collées, il ne faut pas l'écraser.
+    const id = d.live ? `${d.id}-rattrapage` : d.id;
+    const flags = d.recovered ? { recovered: true } : d.live ? { recovered: true } : {};
+    history.upsert(id, { raw, text, app: d.app, words, ...flags }, store.get('historyLimit'));
+  }
+  store.bumpStats({ words, seconds: Math.round(d.durationMs / 1000) });
+
+  if (!paste) {
+    // Dictée reprise plus tard : rien ne dit que le bon champ a encore le focus.
+    // Le texte va dans l'historique et le presse-papier, jamais à l'aveugle.
+    clipboard.writeText(text);
+    pending.forget(d.id);
+    if (failedDictation === d) failedDictation = null;
+    log(`dictée ${d.id} retranscrite (${words} mots), copiée dans le presse-papier`);
+    if (!d.recovered) showDone(words, text, false);
+    updateTray();
+    return;
+  }
+
+  const result = await inject.insertText(text, {
+    autoPaste: store.get('autoPaste'),
+    targetApp: d.app,
+    refocus: store.get('refocusTarget'),
+    restoreClipboard: store.get('restoreClipboard')
+  });
+  log('insertion :', JSON.stringify(result));
+  if (result.refocused) log(`focus rendu à « ${result.refocused} »`);
+  pending.forget(d.id);
+  if (failedDictation === d) failedDictation = null;
+  updateTray();
+
+  if (!result.pasted && result.reason === 'accessibility') {
+    inject.openAccessibilitySettings();
+    fail('Copié — autorisez l’Accessibilité', 2600);
+    return;
+  }
+  if (!result.pasted && result.reason === 'keystroke-failed') {
+    fail('Copié — collez manuellement', 2400);
+    return;
+  }
+  showDone(words, text, result.pasted);
+}
+
+function showDone(words, text, pasted) {
+  setState('done', { words, text: text.slice(0, 90), pasted });
+  setTimeout(() => {
+    if (state !== 'done') return;
+    setState('idle');
+    hideOverlay(0);
+  }, 1100);
+}
+
+/** Échec : l'audio reste dans la file, la pilule propose de réessayer. */
+function onDictationFailed(d) {
+  if (isAbort(d.failed)) {
+    setState('idle');
+    hideOverlay(0);
+    return;
+  }
+  failedDictation = d;
+  updateTray();
+  if (dictation === d || state === 'working') {
+    fail(humanError(d.failed), 7000, { retry: true });
+  }
+}
+
+/**
+ * Relance une dictée en échec à partir de son audio gardé.
+ * `paste` : depuis la pilule, juste après l'échec, on colle comme d'habitude ;
+ * depuis le menu, plus tard, on se limite à l'historique et au presse-papier.
+ */
+async function retryDictation(d, { paste }) {
+  const parts = pending.parts(d.id);
+  if (!parts.length) {
+    log(`réessai impossible : audio de ${d.id} introuvable`);
+    if (failedDictation === d) failedDictation = null;
+    updateTray();
+    return;
+  }
+  log(`réessai de ${d.id} (${parts.length} morceau(x))`);
+  Object.assign(d, { raws: [], failed: null, failedParts: [], cancelled: false, finished: false, abort: new AbortController(), chain: Promise.resolve() });
+  d.durationMs = parts.reduce((n, p) => n + (p.durationMs || 0), 0);
+  if (!d.recovered) {
+    overlayWin?.setIgnoreMouseEvents(true);
+    setState('working', { step: 'nouvel essai' });
+    showOverlay();
+  }
+  for (const p of parts) d.chain = d.chain.then(() => transcribePart(d, p.index, p));
+  await d.chain;
+  if (d.failed) {
+    failedDictation = d;
+    updateTray();
+    if (!d.recovered) fail(humanError(d.failed), 7000, { retry: true });
+    return false;
+  }
+  await finishClassic(d, { paste });
+  return true;
+}
+
+ipcMain.on('overlay:retry', () => {
+  if (!failedDictation || state !== 'error') return;
+  // Les phrases ratées d'une dictée directe ne peuvent plus être collées à leur place.
+  retryDictation(failedDictation, { paste: !failedDictation.live }).catch(onFatal);
+});
+
+/**
+ * Au démarrage : les dictées restées sur le disque (plantage, Mac éteint
+ * pendant une transcription) sont retranscrites dans l'historique.
+ */
+async function recoverPendingDictations() {
+  const leftovers = pending.dictationsOnDisk().filter((m) => !dictation || m.id !== dictation.id);
+  if (!leftovers.length) return;
+  log(`${leftovers.length} dictée(s) en attente sur le disque : reprise`);
+  for (const m of leftovers) {
+    const d = Object.assign(newDictation(false), { id: m.id, app: m.app || '', recovered: true });
+    const ok = await retryDictation(d, { paste: false }).catch(() => false);
+    if (!ok) log(`dictée ${m.id} toujours en attente (réseau ou fournisseur indisponible)`);
+  }
+}
+
+/* ---------- Mode direct : phrases transcrites en parallèle, collées dans l'ordre ---------- */
+
+/**
+ * File d'attente d'insertion du mode direct.
  * Les transcriptions tournent en parallèle — c'est ce qui rend le mode direct
  * fluide — mais les phrases doivent être collées dans l'ordre où elles ont été
  * prononcées, pas dans l'ordre où le réseau les rend. La place dans la file est
@@ -449,123 +811,91 @@ let segmentsInserted = 0;
  */
 let liveContext = '';
 
-ipcMain.on('recorder:audio', (_e, payload) => {
-  const prepared = prepareText(payload).catch((err) => {
-    onPipelineError(err, payload);
-    return null;
-  });
-
-  insertQueue = insertQueue
-    .then(() => prepared)
-    .then((ready) => (ready ? deliver(ready, payload) : null))
-    .catch((err) => onPipelineError(err, payload));
-});
+function onLiveSegment(d, part, payload) {
+  if (part >= 0) {
+    const prepared = prepareSegment(d, part, payload).catch((err) => {
+      if (!isAbort(err)) {
+        log('ERREUR phrase :', err.message || err);
+        d.failed = d.failed || err;
+        d.failedParts.push(part);
+      }
+      return null;
+    });
+    insertQueue = insertQueue
+      .then(() => prepared)
+      .then((ready) => (ready ? deliverSegment(d, part, ready) : null))
+      .catch((err) => log('ERREUR insertion :', err.message || err));
+  }
+  if (payload.final) insertQueue = insertQueue.then(() => finishLive(d));
+}
 
 /** Étape parallélisable : audio -> texte prêt à écrire. */
-async function prepareText({ buffer, mime, durationMs, segment = false }) {
-  const audio = Buffer.from(buffer);
-  log(`audio reçu (${segment ? 'segment' : 'dictée'}) : ${audio.length} octets, ${mime}, ${durationMs} ms`);
-
-  if (!audio.length || durationMs < 350) {
-    log('audio trop court, abandon');
-    if (!segment) {
-      setState('idle');
-      hideOverlay(100);
-    }
-    return null;
-  }
-
-  abortCtl = new AbortController();
-  const signal = abortCtl.signal;
-
-  if (!segment) setState('working', { step: 'transcription' });
+async function prepareSegment(d, part, { buffer, mime }) {
   const t0 = Date.now();
-  // Les segments partent en parallèle : le contexte est celui disponible à cet
+  // Les phrases partent en parallèle : le contexte est celui disponible à cet
   // instant, pas forcément la phrase immédiatement précédente. C'est sans
   // importance — il sert d'indice au modèle, pas de vérité à respecter.
-  const context = segment ? liveContext : '';
-  const raw = await transcribe({ audio, mime, store, signal, context });
-  log(`transcription (${Date.now() - t0} ms) :`, JSON.stringify(raw));
-
+  const context = liveContext;
+  const raw = await transcribe({ audio: Buffer.from(buffer), mime, store, signal: d.abort.signal, context });
+  log(`transcription phrase ${part + 1} (${Date.now() - t0} ms) :`, JSON.stringify(raw));
   if (!raw) {
-    if (segment) return null; // un blanc au milieu d'une dictée continue n'est pas une erreur
-    fail('Rien entendu', 1800);
+    pending.forgetPart(d.id, part); // un blanc n'a rien à garder
     return null;
   }
-
-  if (segment) liveContext = `${liveContext} ${raw}`.trim().slice(-600);
-
-  if (!segment) setState('working', { step: 'mise en forme' });
-  const t1 = Date.now();
-  const text = await format({ text: raw, store, appName: targetApp, signal, context });
-  log(`mise en forme (${Date.now() - t1} ms) :`, JSON.stringify(text));
-
+  liveContext = `${liveContext} ${raw}`.trim().slice(-600);
+  const text = await format({ text: raw, store, appName: d.app, signal: d.abort.signal, context });
   return { raw, text };
 }
 
-/** Étape strictement ordonnée : écriture dans l'application cible. */
-async function deliver({ raw, text }, { durationMs, segment = false, final = false }) {
+/** Étape strictement ordonnée : écriture de la phrase dans l'application cible. */
+async function deliverSegment(d, part, { raw, text }) {
+  if (d.cancelled) return;
   // En continu, chaque phrase s'ajoute à la précédente : il faut l'espace.
-  const prefix = segmentsInserted > 0 ? ' ' : '';
+  const piece = (segmentsInserted > 0 ? ' ' : '') + text;
+  d.liveText += piece;
+  d.raws[part] = raw;
 
-  const result = await inject.insertText(prefix + text, {
+  // Une seule entrée d'historique par dictée, complétée phrase après phrase.
+  if (keepsHistory()) {
+    history.upsert(d.id, { raw: d.raws.filter(Boolean).join(' '), text: d.liveText.trim(), app: d.app, words: countWords(d.liveText) }, store.get('historyLimit'));
+  }
+
+  const result = await inject.insertText(piece, {
     autoPaste: store.get('autoPaste'),
-    targetApp,
+    targetApp: d.app,
     refocus: store.get('refocusTarget'),
     restoreClipboard: store.get('restoreClipboard')
   });
   log('insertion :', JSON.stringify(result));
-  if (result.refocused) log(`focus rendu à « ${result.refocused} »`);
-
-  const words = text.split(/\s+/).filter(Boolean).length;
-  store.bumpStats({ words, seconds: Math.round(durationMs / 1000) });
-
-  if (!store.get('privacyMode')) {
-    history.add({ raw, text, app: targetApp, words }, store.get('historyLimit'));
-  }
-
-  if (!result.pasted && result.reason === 'accessibility') {
-    inject.openAccessibilitySettings();
-    fail('Copié — autorisez l\u2019Accessibilité', 2600);
-    return;
-  }
-
-  if (!result.pasted && result.reason === 'keystroke-failed') {
-    // Le texte est dans le presse-papier : on le dit plutôt que d'afficher « inséré ».
-    fail('Copié — collez manuellement', 2400);
-    return;
-  }
-
+  pending.forgetPart(d.id, part);
   segmentsInserted += 1;
-
-  if (segment && !final) {
-    // On reste en écoute : l'overlay affiche le décompte au lieu d'un état final.
-    if (state === 'recording') setState('recording', { live: true, segments: segmentsInserted });
-    return;
-  }
-
-  // Fin de dictée : le compteur repart à zéro, sinon la dictée suivante
-  // commencerait par une espace héritée de celle-ci.
-  segmentsInserted = 0;
-  liveContext = '';
-
-  setState('done', { words, text: text.slice(0, 90), pasted: result.pasted });
-  setTimeout(() => {
-    setState('idle');
-    hideOverlay(0);
-  }, 1100);
+  if (state === 'recording') setState('recording', { live: true, segments: segmentsInserted });
 }
 
-function onPipelineError(err, { segment = false } = {}) {
-  abortCtl = null;
-  if (err && err.name === 'AbortError') {
-    setState('idle');
-    hideOverlay(0);
+function finishLive(d) {
+  if (d.finished) return;
+  d.finished = true;
+  const words = countWords(d.liveText);
+  store.bumpStats({ words, seconds: Math.round(d.durationMs / 1000) });
+  segmentsInserted = 0;
+  liveContext = '';
+  if (d.cancelled) return;
+
+  if (d.failedParts.length) {
+    // Les phrases ratées ne peuvent plus être collées à leur place : elles seront
+    // retranscrites dans l'historique et le presse-papier.
+    failedDictation = d;
+    updateTray();
+    const n = d.failedParts.length;
+    fail(`${n} phrase${n > 1 ? 's' : ''} non transcrite${n > 1 ? 's' : ''}`, 7000, { retry: true });
     return;
   }
-  log('ERREUR pipeline :', err && err.message ? err.message : err);
-  if (segment) return; // en direct, une phrase ratée ne doit pas couper la dictée
-  fail(humanError(err), 3200);
+  pending.forget(d.id);
+  if (!words) {
+    fail('Rien entendu', 1800);
+    return;
+  }
+  showDone(words, d.liveText.trim(), true);
 }
 
 /**
@@ -935,11 +1265,25 @@ const SPOKEN_LANGUAGES = [
   ['pt', 'Português']
 ];
 
+/** Entrées du menu pour les dictées en échec ou restées en attente sur le disque. */
+function retryMenuItems() {
+  const items = [];
+  if (failedDictation) {
+    items.push({ label: 'Réessayer la dernière dictée', click: () => retryDictation(failedDictation, { paste: false }).catch(onFatal) });
+  }
+  const leftovers = pending ? pending.dictationsOnDisk().filter((m) => m.id !== dictation?.id && m.id !== failedDictation?.id).length : 0;
+  if (leftovers) {
+    items.push({ label: `Retranscrire ${leftovers} dictée${leftovers > 1 ? 's' : ''} en attente`, click: () => recoverPendingDictations().catch(onFatal) });
+  }
+  return items.length ? [...items, { type: 'separator' }] : [];
+}
+
 function updateTray() {
   if (!tray) return;
   const labels = {
     idle: 'Souffle — prêt',
     recording: 'Souffle — écoute…',
+    paused: 'Souffle — en pause',
     working: 'Souffle — transcription…',
     done: 'Souffle — inséré',
     error: 'Souffle — erreur'
@@ -949,7 +1293,8 @@ function updateTray() {
   const s = store.get('stats');
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: state === 'recording' ? 'Arrêter la dictée' : 'Dicter maintenant', click: toggleRecording },
+      { label: state === 'recording' || state === 'paused' ? 'Terminer la dictée' : 'Dicter maintenant', click: toggleRecording },
+      ...(state === 'recording' || state === 'paused' ? [{ label: state === 'paused' ? 'Reprendre' : 'Mettre en pause', click: togglePause }] : []),
       { type: 'separator' },
       { label: `Raccourci : ${store.get('shortcut')}`, enabled: false },
       {
@@ -996,6 +1341,8 @@ function updateTray() {
           refreshSettingsWindow();
         }
       },
+      ...retryMenuItems(),
+      { label: 'Replacer la bulle au centre', enabled: Boolean(store.get('overlayPosition')), click: () => store.set({ overlayPosition: null }) },
       { label: 'Réglages…', accelerator: 'CommandOrControl+,', click: () => openSettings() },
       { label: 'Historique…', click: () => openSettings('history') },
       { label: 'Mode d’emploi', click: openGuide },
@@ -1017,6 +1364,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     store = new Store();
     history = new History();
+    pending = new Pending(path.join(app.getPath('userData'), 'en-attente'));
 
     try {
       uiohook = require('uiohook-napi');
@@ -1055,6 +1403,11 @@ if (!app.requestSingleInstanceLock()) {
     }
 
     app.on('activate', () => openSettings());
+
+    // Les dictées restées sur le disque (plantage, Mac éteint pendant une
+    // transcription) sont retranscrites dans l'historique, une fois le réseau
+    // et la fenêtre de capture prêts.
+    setTimeout(() => recoverPendingDictations().catch((err) => log('reprise impossible :', err.message)), 5000);
   });
 
   process.on('uncaughtException', onFatal);
