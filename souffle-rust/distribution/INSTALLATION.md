@@ -30,7 +30,12 @@ Souffle/
 ## Sur un Mac
 
 1. **Double-cliquez** sur `Installer sur ce Mac.command`.
-   Si macOS refuse de l'ouvrir (« développeur non identifié ») : **clic droit → Ouvrir → Ouvrir**.
+   Si macOS répond « Apple n'a pas pu confirmer… » : cliquez sur **Terminé** (surtout pas
+   « Placer dans la corbeille »), puis au choix :
+   - **Réglages Système → Confidentialité et sécurité**, tout en bas : **Ouvrir quand même**,
+     puis double-cliquez de nouveau sur le fichier et confirmez ;
+   - ou ouvrez le **Terminal**, tapez `bash ` (avec l'espace), **glissez le fichier** dans la
+     fenêtre du Terminal, puis appuyez sur **Entrée**.
 2. Une fenêtre de Terminal s'ouvre et fait tout. La **première fois**, elle installe les outils
    nécessaires pour construire Souffle sur votre Mac :
    - les **outils de développement d'Apple** : une fenêtre d'Apple s'ouvre, cliquez sur
