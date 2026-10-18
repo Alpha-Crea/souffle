@@ -219,6 +219,13 @@ impl Config {
             }
             self.revision = 1;
         }
+        if self.revision < 2 {
+            // Maj + Espace, accepté par la version 0.3.0, se déclenchait en tapant.
+            if crate::shortcuts::validate(&self.shortcut).is_err() {
+                self.shortcut = "Alt+Space".into();
+            }
+            self.revision = 2;
+        }
         self.revision != before
     }
 
@@ -386,13 +393,16 @@ mod tests {
     fn upgrade_runs_once() {
         let mut cfg = Config { shortcut: "Control+Shift+Space".into(), ..Default::default() };
         assert!(cfg.upgrade());
-        assert_eq!(cfg.revision, 1);
+        assert_eq!(cfg.revision, 2);
         let expected = if cfg!(target_os = "windows") { "Alt+Space" } else { "Control+Shift+Space" };
         assert_eq!(cfg.shortcut, expected);
         cfg.shortcut = "Control+Shift+Space".into();
         assert!(!cfg.upgrade(), "une seule fois : un choix fait ensuite est respecté");
         assert_eq!(cfg.shortcut, "Control+Shift+Space");
         assert_eq!(Config::default().shortcut, "Alt+Space");
+        let mut shift = Config { shortcut: "Shift+Space".into(), revision: 1, ..Default::default() };
+        assert!(shift.upgrade());
+        assert_eq!(shift.shortcut, "Alt+Space");
     }
 
     #[test]

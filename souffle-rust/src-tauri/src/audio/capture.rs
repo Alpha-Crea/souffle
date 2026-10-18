@@ -57,7 +57,8 @@ pub type Sink = Arc<dyn Fn(Event) + Send + Sync>;
 enum Msg {
     Cmd(Cmd),
     Samples(u64, Vec<f32>),
-    StreamError(u64, String),
+    /// Numéro du flux, message, et si le flux est perdu pour de bon.
+    StreamError(u64, String, bool),
 }
 
 /// Poignée vers le fil de capture.
@@ -112,6 +113,9 @@ struct Session {
     disk_buf: Vec<i16>,
     started: bool,
     tried: Vec<String>,
+    /// Le micro a déjà été rouvert une fois après une erreur.
+    reopened: bool,
+    glitch_logged: bool,
     opened_at: Instant,
     zero_ms: u64,
     last_level: Instant,
@@ -158,14 +162,14 @@ impl Worker {
                     for m in later {
                         match m {
                             Msg::Cmd(c) => self.command(c),
-                            Msg::StreamError(g, e) => self.stream_error(g, e),
+                            Msg::StreamError(g, e, fatal) => self.stream_error(g, e, fatal),
                             Msg::Samples(..) => {}
                         }
                     }
                 }
                 Ok(Msg::Cmd(c)) => self.command(c),
                 Ok(Msg::Samples(g, s)) => self.samples(g, &s),
-                Ok(Msg::StreamError(g, e)) => self.stream_error(g, e),
+                Ok(Msg::StreamError(g, e, fatal)) => self.stream_error(g, e, fatal),
                 Err(RecvTimeoutError::Timeout) => self.tick(),
                 Err(RecvTimeoutError::Disconnected) => return,
             }
@@ -194,6 +198,8 @@ impl Worker {
                     disk_buf: vec![],
                     started: false,
                     tried: vec![],
+                    reopened: false,
+                    glitch_logged: false,
                     opened_at: Instant::now(),
                     zero_ms: 0,
                     last_level: Instant::now(),
@@ -343,9 +349,18 @@ impl Worker {
         }
     }
 
-    fn stream_error(&mut self, generation: u64, e: String) {
+    fn stream_error(&mut self, generation: u64, e: String, fatal: bool) {
         let Some(s) = self.session.as_mut() else { return };
         if generation != s.generation {
+            return;
+        }
+        if !fatal {
+            // Simple accroc (tampon en retard, route audio changée) : le flux
+            // continue. Les micros Intel Smart Sound en signalent dès l'ouverture.
+            if !s.glitch_logged {
+                s.glitch_logged = true;
+                crate::log!("capture : accroc sans gravité ({}) : {e}", s.device);
+            }
             return;
         }
         crate::log!("capture : erreur du flux ({}) : {e}", s.device);
@@ -354,8 +369,14 @@ impl Worker {
             return;
         }
         // Micro débranché en pleine dictée : on garde ce qui a été dit et on
-        // poursuit sur le micro suivant.
+        // poursuit sur le micro suivant — ou on rouvre le même, une fois, s'il
+        // est toujours là.
         s.started = false;
+        if !s.reopened {
+            s.reopened = true;
+            let device = s.device.clone();
+            s.tried.retain(|n| *n != device);
+        }
         self.open_next_device();
     }
 
@@ -416,6 +437,12 @@ impl Worker {
     }
 }
 
+/// Le flux est-il perdu ? Les autres erreurs ne sont que des accrocs : le
+/// pilote continue de livrer le son.
+fn is_fatal(kind: cpal::ErrorKind) -> bool {
+    !matches!(kind, cpal::ErrorKind::Xrun | cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::RealtimeDenied)
+}
+
 fn open_stream(device: &cpal::Device, generation: u64, tx: Sender<Msg>) -> Result<(cpal::Stream, u32, usize), String> {
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let format = supported.sample_format();
@@ -424,7 +451,7 @@ fn open_stream(device: &cpal::Device, generation: u64, tx: Sender<Msg>) -> Resul
     let channels = config.channels as usize;
     let err_tx = tx.clone();
     let on_err = move |e: cpal::Error| {
-        let _ = err_tx.send(Msg::StreamError(generation, e.to_string()));
+        let _ = err_tx.send(Msg::StreamError(generation, e.to_string(), is_fatal(e.kind())));
     };
     macro_rules! build {
         ($t:ty, $conv:expr) => {{
@@ -450,4 +477,17 @@ fn open_stream(device: &cpal::Device, generation: u64, tx: Sender<Msg>) -> Resul
     .map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;
     Ok((stream, rate, channels))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glitches_do_not_stop_the_microphone() {
+        assert!(!is_fatal(cpal::ErrorKind::Xrun));
+        assert!(!is_fatal(cpal::ErrorKind::DeviceChanged));
+        assert!(is_fatal(cpal::ErrorKind::DeviceNotAvailable));
+        assert!(is_fatal(cpal::ErrorKind::StreamInvalidated));
+    }
 }

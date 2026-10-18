@@ -1,7 +1,7 @@
 {
   "name": "souffle-natif",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Souffle, version native (Rust + Tauri).",
   "scripts": {
     "tauri": "tauri",

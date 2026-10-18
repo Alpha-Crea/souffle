@@ -3,7 +3,7 @@
 use crate::AppState;
 use std::str::FromStr;
 use tauri::{AppHandle, Manager, Runtime};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState};
 
 const ESCAPE: &str = "Escape";
 
@@ -30,9 +30,13 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 /// Vérifie qu'un raccourci est utilisable, sans l'enregistrer.
 pub fn validate(accel: &str) -> Result<(), String> {
     let s = Shortcut::from_str(accel).map_err(|e| format!("raccourci illisible : {e}"))?;
-    if s.mods.is_empty() && !matches!(accel.to_lowercase().as_str(), s if s.starts_with('f') && s[1..].parse::<u8>().is_ok()) {
-        // Une touche nue (lettre, Espace…) se déclencherait à chaque frappe.
-        return Err("ajoutez au moins une touche de modification (⌥, ⌃, ⇧ ou ⌘)".into());
+    let key = format!("{:?}", s.key);
+    let function_key = key.len() > 1 && key.starts_with('F') && key[1..].parse::<u8>().is_ok();
+    // Une touche nue (lettre, Espace…) se déclencherait à chaque frappe, et Maj
+    // seule aussi : Maj + Espace arrive sans cesse en tapant une majuscule.
+    let typing = s.mods.is_empty() || s.mods == Modifiers::SHIFT;
+    if typing && !function_key {
+        return Err("ajoutez ⌥ Option/Alt, ⌃ Ctrl ou ⌘ : Maj seule se déclencherait en tapant".into());
     }
     Ok(())
 }
@@ -172,6 +176,10 @@ mod tests {
         assert!(validate("F8").is_ok());
         assert!(validate("Space").is_err());
         assert!(validate("A").is_err());
+        assert!(validate("Shift+Space").is_err());
+        assert!(validate("Shift+A").is_err());
+        assert!(validate("Shift+F8").is_ok());
+        assert!(validate("Alt+Shift+Space").is_ok());
         assert!(validate("Hyper+Truc").is_err());
         let p = pretty("Control+Shift+Space");
         assert!(p.contains("Espace") && p.contains(" + "));
