@@ -45,6 +45,13 @@ pub fn register_main(app: &AppHandle) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
     let res = validate(&accel).and_then(|_| gs.register(accel.as_str()).map_err(|e| e.to_string()));
+    // Alt + Espace refusé par Windows (une autre application le tient) :
+    // on revient à l'ancien raccourci plutôt que de laisser Souffle muet.
+    if res.is_err() && cfg!(target_os = "windows") && accel == "Alt+Space" {
+        crate::log!("Alt + Espace indisponible, retour à Ctrl + Maj + Espace");
+        state.engine.settings.update(|c| c.shortcut = "Control+Shift+Space".into());
+        return register_main(app);
+    }
     match &res {
         Ok(()) => {
             crate::log!("raccourci « {accel} » enregistré");
@@ -118,7 +125,7 @@ pub fn escape_watch(app: &AppHandle, on: bool) {
     });
 }
 
-/// Affichage lisible : « ⌥ Espace » sur Mac, « Ctrl + Maj + Espace » ailleurs.
+/// Affichage lisible : « ⌥ Option + Espace » sur Mac, « Alt + Espace » ailleurs.
 pub fn pretty(accel: &str) -> String {
     let mac = cfg!(target_os = "macos");
     accel
@@ -126,18 +133,31 @@ pub fn pretty(accel: &str) -> String {
         .map(|p| {
             let p = p.trim();
             match p.to_lowercase().as_str() {
-                "alt" | "option" => if mac { "⌥" } else { "Alt" }.to_string(),
-                "control" | "ctrl" => if mac { "⌃" } else { "Ctrl" }.to_string(),
-                "shift" => if mac { "⇧" } else { "Maj" }.to_string(),
-                "command" | "cmd" | "super" | "meta" => if mac { "⌘" } else { "Win" }.to_string(),
-                "commandorcontrol" | "cmdorctrl" => if mac { "⌘" } else { "Ctrl" }.to_string(),
+                "alt" | "option" => if mac { "⌥ Option" } else { "Alt" }.to_string(),
+                "control" | "ctrl" => if mac { "⌃ Contrôle" } else { "Ctrl" }.to_string(),
+                "shift" => if mac { "⇧ Maj" } else { "Maj" }.to_string(),
+                "command" | "cmd" | "super" | "meta" => if mac { "⌘ Cmd" } else { "Win" }.to_string(),
+                "commandorcontrol" | "cmdorctrl" => if mac { "⌘ Cmd" } else { "Ctrl" }.to_string(),
                 "space" => "Espace".to_string(),
                 "escape" | "esc" => "Échap".to_string(),
+                "enter" | "return" => "Entrée".to_string(),
                 _ => p.to_uppercase(),
             }
         })
         .collect::<Vec<_>>()
-        .join(if mac { " " } else { " + " })
+        .join(" + ")
+}
+
+/// Pendant que l'on choisit un nouveau raccourci dans les réglages, les
+/// raccourcis de Souffle sont mis de côté : sinon l'ancien se déclencherait
+/// au lieu d'être saisi.
+pub fn capture(app: &AppHandle, on: bool) {
+    if on {
+        let _ = app.global_shortcut().unregister_all();
+        crate::log!("saisie d'un raccourci : raccourcis suspendus");
+    } else {
+        let _ = register_main(app);
+    }
 }
 
 #[cfg(test)]
@@ -154,6 +174,7 @@ mod tests {
         assert!(validate("A").is_err());
         assert!(validate("Hyper+Truc").is_err());
         let p = pretty("Control+Shift+Space");
-        assert!(p.contains("Espace"));
+        assert!(p.contains("Espace") && p.contains(" + "));
+        assert!(pretty("Alt+Space").ends_with("Espace"));
     }
 }

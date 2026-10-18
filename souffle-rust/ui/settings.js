@@ -104,7 +104,8 @@ function render() {
   $('version').textContent = `version ${cfg.version}`;
   $('aboutVersion').textContent = cfg.version;
 
-  $('shortcut').textContent = cfg.shortcutPretty || cfg.shortcut;
+  if (!capturing) $('shortcut').textContent = cfg.shortcutPretty || cfg.shortcut;
+  renderPresets();
   $('shortcutError').hidden = !cfg.shortcutError;
   $('shortcutError').textContent = cfg.shortcutError || '';
   const anyKey = Object.values(cfg.secrets || {}).some(Boolean);
@@ -299,32 +300,102 @@ function accelFrom(e) {
   return parts.join('+');
 }
 
-let capturing = false;
-$('shortcut').addEventListener('click', () => {
-  capturing = !capturing;
-  $('shortcut').classList.toggle('listening', capturing);
-  $('shortcut').textContent = capturing ? 'Tapez la combinaison…' : cfg.shortcutPretty;
-});
-window.addEventListener('keydown', async (e) => {
-  if (!capturing) return;
-  e.preventDefault();
-  if (e.code === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-    capturing = false;
-    $('shortcut').classList.remove('listening');
-    $('shortcut').textContent = cfg.shortcutPretty;
-    return;
+/* Affichage des touches, comme le fait l'application. */
+function prettyAccel(accel) {
+  const mac = isMac();
+  const names = {
+    alt: mac ? '⌥ Option' : 'Alt', option: mac ? '⌥ Option' : 'Alt',
+    control: mac ? '⌃ Contrôle' : 'Ctrl', ctrl: mac ? '⌃ Contrôle' : 'Ctrl',
+    shift: mac ? '⇧ Maj' : 'Maj', command: '⌘ Cmd', super: 'Win',
+    space: 'Espace', enter: 'Entrée'
+  };
+  return accel.split('+').map((p) => names[p.toLowerCase()] || p.toUpperCase()).join(' + ');
+}
+
+const PRESETS = ['Alt+Space', 'Control+Shift+Space', 'Alt+Shift+Space', 'F8'];
+
+function renderPresets() {
+  const box = $('presets');
+  box.innerHTML = '<span>Raccourcis courants :</span>';
+  for (const accel of PRESETS) {
+    const b = document.createElement('button');
+    b.textContent = prettyAccel(accel);
+    b.classList.toggle('on', cfg.shortcut === accel);
+    b.addEventListener('click', () => chooseShortcut(accel));
+    box.append(b);
   }
-  const accel = accelFrom(e);
-  if (!accel) return;
+}
+
+async function chooseShortcut(accel) {
+  if (capturing) setCapturing(false);
+  if (accel === cfg.shortcut) return;
   try {
     await invoke('validate_shortcut', { accel });
   } catch (err) {
     toast(String(err), true);
     return;
   }
-  capturing = false;
-  $('shortcut').classList.remove('listening');
-  if (await save({ shortcut: accel })) toast(`Nouveau raccourci : ${cfg.shortcutPretty}`);
+  if (await save({ shortcut: accel })) toast(`Raccourci enregistré : ${cfg.shortcutPretty}`);
+}
+
+/* Saisie : un clic pour commencer, vos touches, un clic pour enregistrer.
+ * Pendant la saisie, les raccourcis de Souffle sont mis de côté : sinon
+ * l'ancien raccourci se déclencherait au lieu d'être saisi. */
+let capturing = false;
+let candidate = null;
+
+function setCapturing(on) {
+  capturing = on;
+  candidate = null;
+  $('shortcut').classList.toggle('listening', on);
+  $('shortcut').textContent = on ? 'Tapez vos touches…' : cfg.shortcutPretty;
+  $('shortcutHelp').textContent = on
+    ? 'Tapez la combinaison, puis recliquez pour l\u2019enregistrer. Échap pour annuler.'
+    : 'Cliquez dessus pour le changer.';
+  invoke('shortcut_capture', { on }).catch(() => {});
+}
+
+$('shortcut').addEventListener('click', async () => {
+  if (!capturing) {
+    setCapturing(true);
+    return;
+  }
+  const chosen = candidate;
+  setCapturing(false);
+  if (chosen) await chooseShortcut(chosen);
+});
+
+window.addEventListener('keydown', async (e) => {
+  if (!capturing) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const bare = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+  if (e.code === 'Escape' && bare) {
+    setCapturing(false);
+    return;
+  }
+  if (e.code === 'Enter' && bare && candidate) {
+    const chosen = candidate;
+    setCapturing(false);
+    await chooseShortcut(chosen);
+    return;
+  }
+  const accel = accelFrom(e);
+  if (!accel) return;
+  try {
+    await invoke('validate_shortcut', { accel });
+    candidate = accel;
+    $('shortcut').textContent = prettyAccel(accel);
+    $('shortcutHelp').textContent = 'Recliquez pour enregistrer ce raccourci (ou Entrée). Échap pour annuler.';
+  } catch (err) {
+    $('shortcut').textContent = prettyAccel(accel);
+    $('shortcutHelp').textContent = String(err);
+  }
+}, true);
+
+// Quitter la fenêtre pendant la saisie l'annule : les raccourcis reviennent.
+window.addEventListener('blur', () => {
+  if (capturing) setCapturing(false);
 });
 
 /* ---------- Clés API ---------- */

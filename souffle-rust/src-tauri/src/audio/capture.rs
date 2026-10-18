@@ -270,6 +270,14 @@ impl Worker {
 
     fn to_part(s: &Session, mut cut: Cut, pause_part: bool, last: bool) -> Part {
         let audible = cut.audible(s.live);
+        crate::log!(
+            "capture : morceau {} — {} ms, voix {} ms, crête {:.0} dBFS{}",
+            s.seq,
+            cut.duration_ms(),
+            cut.speech_ms,
+            cut.peak_dbfs(),
+            if audible { "" } else { " (inaudible, non envoyé)" }
+        );
         let audio = audible.then(|| {
             let duration_ms = cut.duration_ms();
             normalize(&mut cut.samples);

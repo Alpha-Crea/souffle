@@ -90,14 +90,16 @@ pub struct Config {
 
     pub stats: Stats,
     pub onboarded: bool,
+    /// Migrations des réglages déjà appliquées.
+    pub revision: u32,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
-            // Windows réserve Ctrl+Espace au changement de langue du clavier, et
-            // Alt+Espace ouvre le menu système de la fenêtre.
-            shortcut: if cfg!(target_os = "macos") { "Alt+Space" } else { "Control+Shift+Space" }.into(),
+            // ⌥ Espace sur Mac, Alt + Espace sur PC : le même geste partout.
+            // (Ctrl+Espace est réservé au changement de langue du clavier.)
+            shortcut: "Alt+Space".into(),
             mode: "toggle".into(),
             escape_action: "stop".into(),
             live_mode: false,
@@ -132,6 +134,7 @@ impl Default for Config {
             overlay_position: None,
             stats: Stats::default(),
             onboarded: false,
+            revision: 0,
         }
     }
 }
@@ -202,6 +205,21 @@ impl Config {
         let tmp = file.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(self).unwrap_or_default())?;
         std::fs::rename(tmp, file)
+    }
+
+    /// Mises à jour des réglages, une seule fois chacune. Renvoie true si
+    /// quelque chose a changé.
+    pub fn upgrade(&mut self) -> bool {
+        let before = self.revision;
+        if self.revision < 1 {
+            // L'ancien raccourci de Windows (trois touches) devient Alt + Espace,
+            // comme ⌥ Espace sur Mac.
+            if cfg!(target_os = "windows") && self.shortcut == "Control+Shift+Space" {
+                self.shortcut = "Alt+Space".into();
+            }
+            self.revision = 1;
+        }
+        self.revision != before
     }
 
     /// Réglages repris de la version Electron. Le meilleur modèle de
@@ -362,6 +380,19 @@ mod tests {
         // champ abîmé : valeur par défaut, le reste est gardé
         assert_eq!(cfg.max_minutes, DEFAULT_MAX_MINUTES);
         assert_eq!(cfg.llm_model, "openai/gpt-oss-120b");
+    }
+
+    #[test]
+    fn upgrade_runs_once() {
+        let mut cfg = Config { shortcut: "Control+Shift+Space".into(), ..Default::default() };
+        assert!(cfg.upgrade());
+        assert_eq!(cfg.revision, 1);
+        let expected = if cfg!(target_os = "windows") { "Alt+Space" } else { "Control+Shift+Space" };
+        assert_eq!(cfg.shortcut, expected);
+        cfg.shortcut = "Control+Shift+Space".into();
+        assert!(!cfg.upgrade(), "une seule fois : un choix fait ensuite est respecté");
+        assert_eq!(cfg.shortcut, "Control+Shift+Space");
+        assert_eq!(Config::default().shortcut, "Alt+Space");
     }
 
     #[test]

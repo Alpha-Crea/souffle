@@ -30,9 +30,11 @@ const CLASSIC_SOFT_CUT_MS: u32 = 25_000;
 const CLASSIC_SOFT_SILENCE_MS: u32 = 600;
 /// … et de force passé celui-ci.
 const CLASSIC_HARD_CUT_MS: u32 = 360_000;
-/// Un morceau dont aucune trame ne dépasse ce niveau est un pur silence :
-/// l'envoyer ferait inventer à Whisper un « Merci d'avoir regardé ».
-const SILENT_PEAK_RMS: f32 = 0.006;
+/// Un morceau dont aucune trame ne dépasse ce niveau (−58 dBFS) est un pur
+/// silence : l'envoyer ferait inventer à Whisper un « Merci d'avoir regardé ».
+/// Le seuil est très bas exprès : sous Windows, le micro arrive sans aucun
+/// réglage automatique du volume, et une voix normale peut être très faible.
+const SILENT_PEAK_RMS: f32 = 0.0012;
 
 #[derive(Debug, Clone)]
 pub struct Cut {
@@ -44,6 +46,11 @@ pub struct Cut {
 impl Cut {
     pub fn duration_ms(&self) -> u64 {
         super::wav::duration_ms(self.samples.len(), SAMPLE_RATE)
+    }
+
+    /// Niveau de crête en dBFS, pour le journal.
+    pub fn peak_dbfs(&self) -> f32 {
+        20.0 * self.peak_rms.max(1e-6).log10()
     }
 
     /// Y a-t-il quelque chose à transcrire ?
@@ -110,7 +117,7 @@ impl Segmenter {
         } else if rms < self.floor * 4.0 {
             self.floor += (rms - self.floor) * 0.01;
         }
-        rms >= (self.floor * 3.0).max(0.008)
+        rms >= (self.floor * 3.0).max(0.003)
     }
 
     /// Ajoute des échantillons (mono, 16 kHz). Renvoie les morceaux à envoyer.
@@ -192,10 +199,10 @@ impl Segmenter {
 /// comprend moins bien. On le remonte, sans jamais saturer ni amplifier un silence.
 pub fn normalize(samples: &mut [i16]) {
     let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0) as f32;
-    if peak < 300.0 {
+    if peak < 60.0 {
         return;
     }
-    let gain = (0.89 * i16::MAX as f32 / peak).min(6.0);
+    let gain = (0.89 * i16::MAX as f32 / peak).min(20.0);
     if gain <= 1.05 {
         return;
     }
@@ -254,8 +261,10 @@ mod tests {
         // Un silence pur n'est pas envoyé.
         s.push(&silence(4000));
         assert!(!s.take().audible(false));
-        // Une voix très basse, elle, l'est.
+        // Une voix très basse, elle, l'est — même à −50 dBFS.
         s.push(&tone(2000, 0.012));
+        assert!(s.take().audible(false));
+        s.push(&tone(2000, 0.004));
         assert!(s.take().audible(false));
     }
 
@@ -282,9 +291,13 @@ mod tests {
     fn normalize_raises_quiet_voices() {
         let mut v = vec![1000i16, -2000, 500];
         normalize(&mut v);
-        assert!(v[1] < -11_000 && v[1] > -12_500);
+        assert!(v[1] < -28_800 && v[1] > -29_500, "{}", v[1]);
         let mut quiet = vec![10i16, -20];
         normalize(&mut quiet);
         assert_eq!(quiet, vec![10, -20]);
+        // Un micro très faible (−48 dBFS) est remonté jusqu'à vingt fois.
+        let mut faint = vec![130i16, -130];
+        normalize(&mut faint);
+        assert_eq!(faint[0], 2600);
     }
 }

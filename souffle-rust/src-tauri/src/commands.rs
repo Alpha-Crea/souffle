@@ -149,6 +149,11 @@ pub fn validate_shortcut(accel: String) -> Result<String, String> {
     shortcuts::validate(&accel).map(|_| shortcuts::pretty(&accel))
 }
 
+#[tauri::command]
+pub fn shortcut_capture(app: AppHandle, on: bool) {
+    shortcuts::capture(&app, on);
+}
+
 /* ---------- Bulle ---------- */
 
 #[tauri::command]
@@ -218,6 +223,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         dictate,
         retry_pending,
         validate_shortcut,
+        shortcut_capture,
         bubble_click,
         bubble_right_click,
         bubble_drag_start,

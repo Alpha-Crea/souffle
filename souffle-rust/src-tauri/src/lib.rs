@@ -58,7 +58,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     journal::init(&dir);
     log!("démarrage — Souffle {} · {} · {}", app.package_info().version, std::env::consts::OS, std::env::consts::ARCH);
 
-    let (cfg, imported) = load_config(&dir);
+    let (mut cfg, imported) = load_config(&dir);
+    if cfg.upgrade() {
+        let _ = cfg.save(&dir.join("config.json"));
+    }
     let secrets = Arc::new(Mutex::new(Secrets::new(&dir, cfg!(any(target_os = "macos", target_os = "windows")))));
     let pending = Arc::new(Pending::new(dir.join("en-attente")));
     let mut history = History::open(&dir);
