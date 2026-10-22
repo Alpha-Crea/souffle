@@ -16,8 +16,8 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, SetForegroundWindow,
-    SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_HIDE, SW_RESTORE,
+    SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_RESTORE,
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -110,7 +110,10 @@ pub fn open_url(url: &str) {
 pub fn show_at(hwnd: isize, frame: Option<(i32, i32, i32, i32)>) {
     unsafe {
         let h = HWND(hwnd as *mut c_void);
-        let mut flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        // SWP_FRAMECHANGED : Windows recalcule le cadre, et c'est à ce moment
+        // que Tauri retire la barre de titre et la bordure. Sans lui, la bulle
+        // garderait le cadre d'une fenêtre ordinaire.
+        let mut flags = SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED;
         let (x, y, w, hh) = frame.unwrap_or_default();
         if frame.is_none() {
             flags |= SWP_NOMOVE | SWP_NOSIZE;

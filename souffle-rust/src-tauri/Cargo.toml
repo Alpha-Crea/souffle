@@ -1,6 +1,6 @@
 [package]
 name = "souffle"
-version = "0.3.5"
+version = "0.3.6"
 description = "Dictée vocale : un raccourci, vous parlez, le texte propre s'écrit là où vous tapez."
 authors = ["Alpha Agency"]
 license = "MIT"
