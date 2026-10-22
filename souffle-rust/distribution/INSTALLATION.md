@@ -5,7 +5,7 @@
 | Votre ordinateur | Le fichier à ouvrir |
 |---|---|
 | **Mac** (Apple Silicon ou Intel) | double-cliquez sur **`Installer sur ce Mac.command`** |
-| **PC Windows** (10 ou 11, 64 bits) | ouvrez le dossier **`Windows`**, puis double-cliquez sur **`Souffle-Installateur-0.3.6.exe`** |
+| **PC Windows** (10 ou 11, 64 bits) | ouvrez le dossier **`Windows`**, puis double-cliquez sur **`Souffle-Installateur-0.3.7.exe`** |
 
 Vos réglages et votre historique sont repris automatiquement depuis l'ancienne version.
 Seule la **clé API** est à recoller une fois (onglet *Intelligence*) : l'ancienne application la
@@ -21,7 +21,7 @@ Souffle/
 ├── 2 — Installation.md            ← le fichier que vous lisez
 ├── Installer sur ce Mac.command   ← Mac : à double-cliquer
 ├── Windows/
-│   └── Souffle-Installateur-0.3.6.exe   ← PC : à double-cliquer
+│   └── Souffle-Installateur-0.3.7.exe   ← PC : à double-cliquer
 └── application/                   ← le code de Souffle (utilisé par l'installation Mac)
 ```
 
@@ -56,12 +56,15 @@ Souffle/
 
 ## Sur un PC Windows
 
-1. Ouvrez le dossier **`Windows`** et double-cliquez sur **`Souffle-Installateur-0.3.6.exe`**.
+1. Ouvrez le dossier **`Windows`** et double-cliquez sur **`Souffle-Installateur-0.3.7.exe`**.
 2. Windows affiche « Windows a protégé votre ordinateur » : cliquez sur **Informations
    complémentaires**, puis **Exécuter quand même**. (L'application n'est pas signée par un
    certificat commercial.)
-3. L'installateur ferme et désinstalle l'ancienne version, puis installe la nouvelle.
+3. L'installateur ferme et désinstalle l'ancienne version Electron, puis installe la nouvelle.
    Rien d'autre à installer : pas de Node.js, pas d'outils.
+   **Mises à jour suivantes** : un double-clic sur le nouvel installateur suffit. Il met Souffle
+   à jour par-dessus, sans rien demander ni désinstaller, puis le relance. Réglages,
+   historique et clé API sont conservés.
 4. Collez votre clé API dans les réglages qui s'ouvrent (*Intelligence*).
 
 Souffle vit dans la zone de notification, en bas à droite (flèche **^** si l'icône est masquée).
