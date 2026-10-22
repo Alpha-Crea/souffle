@@ -126,6 +126,14 @@ pub fn set_interactive(app: &AppHandle, on: bool) {
         if cfg!(target_os = "linux") && !w.is_visible().unwrap_or(false) {
             return;
         }
+        // Sous Windows, la bulle est montrée sans passer par Tauri (pour ne pas
+        // voler le focus) : Tauri la croit donc cachée, et la recacherait au
+        // moindre changement de style. On bascule le style nous-mêmes.
+        #[cfg(target_os = "windows")]
+        if let Ok(h) = w.hwnd() {
+            crate::platform::windows::set_click_through(h.0 as isize, !on);
+            return;
+        }
         let _ = w.set_ignore_cursor_events(!on);
     }
 }

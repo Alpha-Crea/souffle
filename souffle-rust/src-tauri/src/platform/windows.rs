@@ -10,8 +10,10 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, SetForegroundWindow,
-    SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE, SW_SHOWNOACTIVATE,
+    BringWindowToTop, GetForegroundWindow, GetWindowLongW, GetWindowThreadProcessId, IsIconic, IsWindow,
+    SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWNOACTIVATE, WS_EX_LAYERED,
+    WS_EX_TRANSPARENT,
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -106,5 +108,22 @@ pub fn show_no_activate(hwnd: isize) {
         let h = HWND(hwnd as *mut c_void);
         let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
         let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+    }
+}
+
+/// Rend la bulle traversable par la souris (ou cliquable), sans la cacher ni
+/// l'activer : mêmes styles que Tauri, appliqués directement.
+pub fn set_click_through(hwnd: isize, on: bool) {
+    unsafe {
+        let h = HWND(hwnd as *mut c_void);
+        let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
+        let bits = WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0;
+        let next = if on { ex | bits } else { ex & !bits };
+        if next == ex {
+            return;
+        }
+        SetWindowLongW(h, GWL_EXSTYLE, next as i32);
+        let flags = SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE;
+        let _ = SetWindowPos(h, None, 0, 0, 0, 0, flags);
     }
 }
