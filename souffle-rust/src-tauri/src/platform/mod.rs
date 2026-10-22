@@ -21,6 +21,10 @@ mod other {
     pub fn focus(_: &Target) -> bool {
         false
     }
+    pub fn remember_field(_: &Target) {}
+    pub fn restore_field(_: &Target) -> bool {
+        false
+    }
     pub fn accessibility_granted() -> bool {
         true
     }

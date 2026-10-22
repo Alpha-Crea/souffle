@@ -182,8 +182,9 @@ async fn transcribe_once(
     if !prompt.is_empty() {
         form = form.text("prompt", prompt);
     }
-    // Une minute de parole pèse ~2 Mo : on laisse le temps à l'envoi.
-    let timeout = Duration::from_secs(60 + audio.bytes.len() as u64 / 200_000);
+    // Vingt-cinq secondes de parole pèsent ~800 Ko et sont transcrites en une
+    // seconde : passé ce délai, la connexion est bloquée, autant le dire vite.
+    let timeout = Duration::from_secs(30 + audio.bytes.len() as u64 / 100_000);
     let mut req = http.post(url).multipart(form).timeout(timeout);
     if !key.is_empty() {
         req = req.bearer_auth(key);
@@ -480,7 +481,7 @@ async fn chat_once(
     key: &str,
     payload: &Value,
 ) -> Result<String, AiError> {
-    let mut req = http.post(url).json(payload).timeout(Duration::from_secs(45));
+    let mut req = http.post(url).json(payload).timeout(Duration::from_secs(30));
     if !key.is_empty() {
         req = req.bearer_auth(key);
     }

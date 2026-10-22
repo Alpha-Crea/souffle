@@ -25,7 +25,13 @@ extern "C" {
     fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
     fn AXUIElementCreateApplication(pid: i32) -> *mut c_void;
     fn AXUIElementSetAttributeValue(element: *mut c_void, attribute: CFStringRef, value: CFTypeRef) -> i32;
+    fn AXUIElementCopyAttributeValue(element: *mut c_void, attribute: CFStringRef, value: *mut CFTypeRef) -> i32;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFEqual(a: CFTypeRef, b: CFTypeRef) -> u8;
 }
 
 #[link(name = "AVFoundation", kind = "framework")]
@@ -59,6 +65,74 @@ pub fn focus(t: &Target) -> bool {
         let err = AXUIElementSetAttributeValue(el, attr.as_concrete_TypeRef(), CFBoolean::true_value().as_CFTypeRef());
         CFRelease(el as CFTypeRef);
         err == 0
+    }
+}
+
+/* ---------- Le champ où l'on écrivait ---------- */
+
+/// Élément d'accessibilité (retenu) qui avait le focus au début de la dictée,
+/// et l'application à laquelle il appartient.
+struct Field {
+    pid: i64,
+    element: usize,
+}
+
+impl Drop for Field {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.element as CFTypeRef) };
+    }
+}
+
+static FIELD: Mutex<Option<Field>> = Mutex::new(None);
+
+/// Élément qui a le focus dans l'application `pid` (à libérer), s'il y en a un.
+unsafe fn focused_element(pid: i64) -> Option<CFTypeRef> {
+    if pid <= 0 || !AXIsProcessTrusted() {
+        return None;
+    }
+    let app = AXUIElementCreateApplication(pid as i32);
+    if app.is_null() {
+        return None;
+    }
+    let attr = CFString::from_static_string("AXFocusedUIElement");
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(app, attr.as_concrete_TypeRef(), &mut value);
+    CFRelease(app as CFTypeRef);
+    (err == 0 && !value.is_null()).then_some(value)
+}
+
+/// Note le champ qui a le focus dans l'application visée.
+pub fn remember_field(t: &Target) {
+    let element = unsafe { focused_element(t.pid) };
+    let mut slot = FIELD.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = element.map(|e| Field { pid: t.pid, element: e as usize });
+}
+
+/// Si l'on a cliqué ailleurs dans la même application pendant la dictée, rend
+/// le focus au champ du départ, pourvu qu'il existe encore.
+pub fn restore_field(t: &Target) -> bool {
+    let slot = FIELD.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(field) = slot.as_ref().filter(|f| f.pid == t.pid) else { return false };
+    unsafe {
+        let saved = field.element as CFTypeRef;
+        if let Some(now) = focused_element(t.pid) {
+            let same = CFEqual(saved, now) != 0;
+            CFRelease(now);
+            if same {
+                return false;
+            }
+        }
+        // Un champ disparu (page changée, fenêtre fermée) ne répond plus.
+        let role = CFString::from_static_string("AXRole");
+        let mut value: CFTypeRef = std::ptr::null();
+        if AXUIElementCopyAttributeValue(saved as *mut c_void, role.as_concrete_TypeRef(), &mut value) != 0 {
+            return false;
+        }
+        if !value.is_null() {
+            CFRelease(value);
+        }
+        let attr = CFString::from_static_string("AXFocused");
+        AXUIElementSetAttributeValue(saved as *mut c_void, attr.as_concrete_TypeRef(), CFBoolean::true_value().as_CFTypeRef()) == 0
     }
 }
 

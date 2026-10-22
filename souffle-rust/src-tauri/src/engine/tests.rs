@@ -481,6 +481,22 @@ async fn old_error_timer_does_not_hide_next_dictation() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn long_dictation_with_empty_transcript_is_kept() {
+    let b = bench("empty-long", |_| {});
+    b.start().await;
+    let id = b.id();
+    b.part(0, Some("TXT:"), false, false);
+    b.part(1, Some("TXT:Merci d'avoir regardé !"), false, false);
+    b.part(2, Some("TXT:"), false, true);
+    settle().await;
+    assert_eq!(b.engine.state(), State::Error);
+    let v = b.last_view();
+    assert_eq!(v.message.as_deref(), Some("Rien compris — réessayer"));
+    assert!(v.retry, "la bulle propose de réessayer");
+    assert_eq!(b.engine.pending.parts(&id).len(), 3, "l'audio n'est pas effacé");
+}
+
+#[tokio::test(start_paused = true)]
 async fn whisper_inventions_and_accessibility() {
     let b = bench("hallucination", |_| {});
     b.start().await;

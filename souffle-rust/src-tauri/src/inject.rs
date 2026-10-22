@@ -64,6 +64,11 @@ pub fn paste(text: &str, opts: &PasteOpts, on_main: OnMain) -> PasteOutcome {
             crate::log!("focus rendu à « {} »", opts.target.name);
             std::thread::sleep(Duration::from_millis(220));
         }
+        // Et, dans cette fenêtre, au champ où l'on avait commencé à parler.
+        if platform::restore_field(&opts.target) {
+            crate::log!("focus rendu au champ de départ");
+            std::thread::sleep(Duration::from_millis(80));
+        }
     }
     // Laisse le focus se stabiliser avant d'envoyer la frappe.
     std::thread::sleep(Duration::from_millis(120));

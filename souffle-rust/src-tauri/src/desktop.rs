@@ -82,7 +82,12 @@ impl Desktop for TauriDesktop {
     }
 
     fn frontmost(&self) -> Target {
-        platform::frontmost()
+        let target = platform::frontmost();
+        // Le champ exact où l'on écrit, pour y revenir si l'on clique ailleurs
+        // dans la même fenêtre. En arrière-plan : la dictée démarre sans attendre.
+        let t = target.clone();
+        std::thread::spawn(move || platform::remember_field(&t));
+        target
     }
 
     async fn paste(&self, text: String, opts: PasteOpts) -> PasteOutcome {

@@ -3,7 +3,12 @@
 use crate::engine::{MicPermission, Target};
 use std::ffi::c_void;
 use std::os::windows::process::CommandExt;
-use windows::core::PWSTR;
+use std::sync::Mutex;
+use windows::core::{Interface, PWSTR};
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
+};
 use windows::Win32::Foundation::{CloseHandle, HWND};
 use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -125,5 +130,56 @@ pub fn set_click_through(hwnd: isize, on: bool) {
         SetWindowLongW(h, GWL_EXSTYLE, next as i32);
         let flags = SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE;
         let _ = SetWindowPos(h, None, 0, 0, 0, 0, flags);
+    }
+}
+
+/* ---------- Le champ où l'on écrivait ---------- */
+
+/// Champ de saisie qui avait le focus au début de la dictée, et sa fenêtre.
+/// Les objets d'automatisation sont utilisés depuis des fils « multithread »
+/// de COM uniquement : ils y passent d'un fil à l'autre sans risque.
+struct Field {
+    window: isize,
+    element: IUIAutomationElement,
+}
+unsafe impl Send for Field {}
+
+static FIELD: Mutex<Option<Field>> = Mutex::new(None);
+
+fn automation() -> Option<IUIAutomation> {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        if let Ok(a) = CoCreateInstance::<_, IUIAutomation2>(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) {
+            // Une application figée ne doit pas retenir Souffle plus d'une seconde.
+            let _ = a.SetConnectionTimeout(1000);
+            let _ = a.SetTransactionTimeout(1000);
+            return a.cast().ok();
+        }
+        CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()
+    }
+}
+
+/// Note le champ qui a le focus dans la fenêtre visée. À appeler hors du fil
+/// principal : le navigateur peut mettre un instant à répondre.
+pub fn remember_field(t: &Target) {
+    let element = automation().and_then(|a| unsafe { a.GetFocusedElement() }.ok());
+    let mut slot = FIELD.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = element.map(|element| Field { window: t.window, element });
+}
+
+/// Si l'on a cliqué ailleurs dans la même fenêtre pendant la dictée, rend le
+/// focus au champ du départ, pourvu qu'il soit encore là et visible.
+pub fn restore_field(t: &Target) -> bool {
+    let slot = FIELD.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(field) = slot.as_ref().filter(|f| f.window == t.window && t.window != 0) else { return false };
+    let Some(a) = automation() else { return false };
+    unsafe {
+        let Ok(now) = a.GetFocusedElement() else { return false };
+        if a.CompareElements(&field.element, &now).map(|b| b.as_bool()).unwrap_or(true) {
+            return false;
+        }
+        let visible = field.element.CurrentIsOffscreen().map(|b| !b.as_bool()).unwrap_or(false);
+        let enabled = field.element.CurrentIsEnabled().map(|b| b.as_bool()).unwrap_or(false);
+        visible && enabled && field.element.SetFocus().is_ok()
     }
 }

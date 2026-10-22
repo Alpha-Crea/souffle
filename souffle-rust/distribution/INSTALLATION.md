@@ -5,7 +5,7 @@
 | Votre ordinateur | Le fichier à ouvrir |
 |---|---|
 | **Mac** (Apple Silicon ou Intel) | double-cliquez sur **`Installer sur ce Mac.command`** |
-| **PC Windows** (10 ou 11, 64 bits) | ouvrez le dossier **`Windows`**, puis double-cliquez sur **`Souffle-Installateur-0.3.3.exe`** |
+| **PC Windows** (10 ou 11, 64 bits) | ouvrez le dossier **`Windows`**, puis double-cliquez sur **`Souffle-Installateur-0.3.4.exe`** |
 
 Vos réglages et votre historique sont repris automatiquement depuis l'ancienne version.
 Seule la **clé API** est à recoller une fois (onglet *Intelligence*) : l'ancienne application la
@@ -21,7 +21,7 @@ Souffle/
 ├── 2 — Installation.md            ← le fichier que vous lisez
 ├── Installer sur ce Mac.command   ← Mac : à double-cliquer
 ├── Windows/
-│   └── Souffle-Installateur-0.3.3.exe   ← PC : à double-cliquer
+│   └── Souffle-Installateur-0.3.4.exe   ← PC : à double-cliquer
 └── application/                   ← le code de Souffle (utilisé par l'installation Mac)
 ```
 
@@ -56,7 +56,7 @@ Souffle/
 
 ## Sur un PC Windows
 
-1. Ouvrez le dossier **`Windows`** et double-cliquez sur **`Souffle-Installateur-0.3.3.exe`**.
+1. Ouvrez le dossier **`Windows`** et double-cliquez sur **`Souffle-Installateur-0.3.4.exe`**.
 2. Windows affiche « Windows a protégé votre ordinateur » : cliquez sur **Informations
    complémentaires**, puis **Exécuter quand même**. (L'application n'est pas signée par un
    certificat commercial.)

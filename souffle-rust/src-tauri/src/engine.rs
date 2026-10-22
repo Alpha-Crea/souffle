@@ -322,6 +322,8 @@ pub struct Engine {
 
 /// Délai sans le moindre signe de vie de la capture.
 const CAPTURE_WATCHDOG_MS: u64 = 3500;
+/// Au-delà de cette durée d'audio, une transcription vide n'efface rien.
+const EMPTY_KEEP_MS: u64 = 4000;
 /// En mode « maintenir », un appui plus court est un simple appui : la dictée continue.
 const HOLD_MIN_MS: u64 = 400;
 
@@ -934,6 +936,18 @@ impl Engine {
             st.finished = true;
         }
         let raw = d.raw_text();
+        let spoken_ms = lock(&d.st).duration_ms;
+        if raw.is_empty() && spoken_ms >= EMPTY_KEEP_MS && !quiet {
+            // Plusieurs secondes d'audio et pas un mot : plutôt qu'effacer, on
+            // garde l'audio et on propose de réessayer (bulle, ou menu plus tard).
+            crate::log!("transcription vide pour {} s d'audio : audio gardé", spoken_ms / 1000);
+            {
+                let mut st = lock(&d.st);
+                st.finished = false;
+                st.failed = Some(AiError::Other("Rien compris — réessayer".into()));
+            }
+            return self.on_dictation_failed(d, quiet);
+        }
         if raw.is_empty() {
             self.pending.forget(&d.id);
             // Une erreur de micro déjà affichée dit mieux ce qui s'est passé.
