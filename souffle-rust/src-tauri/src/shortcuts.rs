@@ -101,32 +101,40 @@ pub fn escape_watch(app: &AppHandle, on: bool) {
         });
     }
 
-    // Jamais depuis l'intérieur d'un rappel de raccourci : on repousse.
+    // Jamais depuis l'intérieur d'un rappel de raccourci (on repousse), et
+    // toujours sur le fil principal : le module des raccourcis garde un verrou
+    // pendant qu'il attend ce fil, et un raccourci pressé au même moment
+    // bloquerait alors toute l'application.
     let app = app.clone();
     let hotkey = on;
     crate::log!("Échap : écoute {} (raccourci : {hotkey}, moniteur : {monitor})", if on { "active" } else { "coupée" });
     tauri::async_runtime::spawn(async move {
-        let gs = app.global_shortcut();
-        if hotkey {
-            if !gs.is_registered(ESCAPE) {
-                match gs.register(ESCAPE) {
-                    Ok(()) => crate::log!("Échap retenu comme raccourci"),
-                    Err(e) => crate::log!("Échap indisponible comme raccourci : {e}"),
-                }
-            }
-        } else if gs.is_registered(ESCAPE) {
-            let _ = gs.unregister(ESCAPE);
-        }
-        // Le raccourci principal doit survivre à tout.
-        let main = app.try_state::<AppState>().map(|s| s.engine.cfg().shortcut).unwrap_or_default();
-        if !main.is_empty() && !gs.is_registered(main.as_str()) {
-            crate::log!("raccourci principal perdu, réenregistrement");
-            let _ = register_main(&app);
-            if hotkey {
-                let _ = gs.register(ESCAPE);
-            }
-        }
+        let handle = app.clone();
+        let _ = handle.run_on_main_thread(move || escape_hotkey(&app, hotkey));
     });
+}
+
+fn escape_hotkey(app: &AppHandle, hotkey: bool) {
+    let gs = app.global_shortcut();
+    if hotkey {
+        if !gs.is_registered(ESCAPE) {
+            match gs.register(ESCAPE) {
+                Ok(()) => crate::log!("Échap retenu comme raccourci"),
+                Err(e) => crate::log!("Échap indisponible comme raccourci : {e}"),
+            }
+        }
+    } else if gs.is_registered(ESCAPE) {
+        let _ = gs.unregister(ESCAPE);
+    }
+    // Le raccourci principal doit survivre à tout.
+    let main = app.try_state::<AppState>().map(|s| s.engine.cfg().shortcut).unwrap_or_default();
+    if !main.is_empty() && !gs.is_registered(main.as_str()) {
+        crate::log!("raccourci principal perdu, réenregistrement");
+        let _ = register_main(app);
+        if hotkey {
+            let _ = gs.register(ESCAPE);
+        }
+    }
 }
 
 /// Affichage lisible : « ⌥ Option + Espace » sur Mac, « Alt + Espace » ailleurs.

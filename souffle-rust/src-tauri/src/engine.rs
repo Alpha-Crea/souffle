@@ -321,7 +321,10 @@ pub struct Engine {
 }
 
 /// Délai sans le moindre signe de vie de la capture.
-const CAPTURE_WATCHDOG_MS: u64 = 3500;
+const CAPTURE_WATCHDOG_MS: u64 = 4500;
+/// Toute requête est bornée dans le temps : passé ce délai après l'arrêt, une
+/// dictée encore « en cours de transcription » est bloquée. On rend la main.
+const WORKING_TIMEOUT_MS: u64 = 180_000;
 /// Au-delà de cette durée d'audio, une transcription vide n'efface rien.
 const EMPTY_KEEP_MS: u64 = 4000;
 /// En mode « maintenir », un appui plus court est un simple appui : la dictée continue.
@@ -626,6 +629,23 @@ impl Engine {
         let live = self.current().is_some_and(|d| d.live);
         self.set_state(State::Working, View { live, ..Default::default() });
         self.rec.send(Cmd::Stop);
+        if let Some(d) = self.current() {
+            self.arm_working_watchdog(&d);
+        }
+    }
+
+    fn arm_working_watchdog(&self, d: &Arc<Dictation>) {
+        let d = d.clone();
+        self.after(WORKING_TIMEOUT_MS, move |e| {
+            if e.state() != State::Working || !e.is_current(&d) {
+                return;
+            }
+            crate::log!("ERREUR : dictée {} bloquée depuis {} s, abandon (audio gardé)", d.id, WORKING_TIMEOUT_MS / 1000);
+            d.token().cancel();
+            e.inner().failed = Some(d.clone());
+            e.desk.tray_changed();
+            e.fail("Délai dépassé", 7000, true);
+        });
     }
 
     pub fn cancel(&self) {
@@ -775,8 +795,16 @@ impl Engine {
             }
             Event::Error(msg) => {
                 crate::log!("ERREUR capture : {msg}");
-                if matches!(self.state(), State::Recording | State::Paused) {
-                    self.fail(&msg, 3500, false);
+                match self.state() {
+                    State::Recording | State::Paused => self.fail(&msg, 3500, false),
+                    // Arrêt déjà demandé : la capture a lâché avant le dernier
+                    // morceau. On termine avec ce qui est déjà arrivé.
+                    State::Working => {
+                        if let Some(d) = self.current() {
+                            self.push_job(&d, if d.live { Job::FinishLive } else { Job::Finish });
+                        }
+                    }
+                    _ => {}
                 }
             }
             Event::Part(p) => self.on_part(p),
@@ -1007,7 +1035,7 @@ impl Engine {
             self.desk.copy(&text);
             self.pending.forget(&d.id);
             crate::log!("dictée {} retranscrite ({words} mots), copiée dans le presse-papier", d.id);
-            if !quiet {
+            if !quiet && self.is_current(d) {
                 self.show_done(words, false);
             }
             self.desk.tray_changed();
@@ -1024,6 +1052,11 @@ impl Engine {
         crate::log!("insertion : {outcome:?}");
         self.pending.forget(&d.id);
         self.desk.tray_changed();
+        // Une dictée suivante a pu commencer entre-temps (après une erreur de
+        // micro) : la bulle est à elle, on ne la touche pas.
+        if !self.is_current(d) {
+            return;
+        }
         match outcome {
             PasteOutcome::Pasted => self.show_done(words, true),
             PasteOutcome::ClipboardOnly => self.show_done(words, false),
@@ -1263,13 +1296,22 @@ impl Engine {
             // seront retranscrites dans l'historique et le presse-papier.
             self.inner().failed = Some(d.clone());
             self.desk.tray_changed();
-            let s = if failed_parts > 1 { "s" } else { "" };
-            self.fail(&format!("{failed_parts} phrase{s} non transcrite{s}"), 7000, true);
+            if self.is_current(d) {
+                let s = if failed_parts > 1 { "s" } else { "" };
+                self.fail(&format!("{failed_parts} phrase{s} non transcrite{s}"), 7000, true);
+            }
             return;
         }
         self.pending.forget(&d.id);
+        // Une dictée suivante a peut-être déjà commencé : la bulle est à elle.
+        if !self.is_current(d) {
+            return;
+        }
         if text_empty {
-            self.fail("Rien entendu", 1800, false);
+            // Une erreur de micro déjà affichée dit mieux ce qui s'est passé.
+            if self.state() != State::Error {
+                self.fail("Rien entendu", 1800, false);
+            }
             return;
         }
         self.show_done(words, true);

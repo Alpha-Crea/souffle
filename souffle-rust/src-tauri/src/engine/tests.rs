@@ -451,11 +451,57 @@ async fn hold_mode() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn capture_error_after_stop_still_finishes() {
+    for live in [false, true] {
+        let b = bench("error-working", |c| c.live_mode = live);
+        b.start().await;
+        b.part(0, Some("TXT:bonjour"), false, false);
+        b.engine.stop();
+        settle().await;
+        assert_eq!(b.engine.state(), State::Working);
+        // La capture lâche avant le dernier morceau.
+        b.engine.on_capture(Event::Error("Micro injoignable".into()));
+        settle().await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        assert_eq!(b.engine.state(), State::Idle, "live = {live}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn stuck_transcription_gives_up_and_keeps_audio() {
+    let b = bench("stuck", |_| {});
+    b.start().await;
+    b.engine.stop();
+    settle().await;
+    // Aucun dernier morceau n'arrive jamais.
+    tokio::time::sleep(Duration::from_secs(181)).await;
+    assert_eq!(b.engine.state(), State::Error);
+    assert_eq!(b.last_view().message.as_deref(), Some("Délai dépassé"));
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert_eq!(b.engine.state(), State::Idle);
+}
+
+#[tokio::test(start_paused = true)]
+async fn old_dictation_does_not_touch_the_new_bubble() {
+    let b = bench("overlap", |_| {});
+    b.start().await;
+    // Erreur de micro : la capture referme la dictée avec un dernier morceau,
+    // encore en cours de transcription quand une nouvelle dictée commence.
+    b.engine.on_capture(Event::Error("Micro muet".into()));
+    b.part(0, Some("LENT:bonjour"), false, true);
+    b.start().await;
+    assert_eq!(b.engine.state(), State::Recording);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(b.pastes(), vec!["[bonjour]"], "l'ancienne dictée est bien écrite");
+    assert_eq!(b.engine.state(), State::Recording, "la nouvelle dictée continue");
+}
+
+#[tokio::test(start_paused = true)]
 async fn watchdog_and_microphone() {
     let b = bench("watchdog", |_| {});
     b.engine.start();
     settle().await;
-    tokio::time::sleep(Duration::from_millis(3600)).await;
+    tokio::time::sleep(Duration::from_millis(4600)).await;
     assert_eq!(b.last_view().message.as_deref(), Some("Micro injoignable"));
 
     let b = bench("mic-denied", |_| {});

@@ -4,7 +4,7 @@
 use crate::config::Position;
 use crate::AppState;
 use std::sync::Mutex;
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, PhysicalPosition, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 /// Capsule de 280 × 60 points, plus une marge pour la lueur du halo.
 pub const WIDTH: f64 = 308.0;
@@ -43,8 +43,9 @@ pub fn create(app: &AppHandle, theme: &str) -> tauri::Result<()> {
         .theme(theme_of(theme))
         .build()?;
     // Sous Linux, une fenêtre encore jamais montrée n'a pas de surface : on
-    // attend qu'elle s'affiche pour la rendre traversable.
-    if cfg!(not(target_os = "linux")) {
+    // attend qu'elle s'affiche pour la rendre traversable. Sous Windows, la
+    // bulle n'est jamais traversable (voir `set_interactive`).
+    if cfg!(target_os = "macos") {
         let _ = w.set_ignore_cursor_events(true);
     }
 
@@ -67,17 +68,17 @@ pub fn set_theme(app: &AppHandle, theme: &str) {
 }
 
 /// Position : la dernière où on l'a posée (en proportion de l'écran), sinon en
-/// bas au centre, sur l'écran où se trouve le pointeur.
-fn place(app: &AppHandle, w: &WebviewWindow) {
-    let Some(state) = app.try_state::<AppState>() else { return };
+/// bas au centre, sur l'écran où se trouve le pointeur. Renvoie le cadre en
+/// pixels : x, y, largeur, hauteur.
+fn frame(app: &AppHandle) -> Option<(i32, i32, i32, i32)> {
+    let state = app.try_state::<AppState>()?;
     let saved = state.engine.cfg().overlay_position;
     let cursor = app.cursor_position().ok();
     let monitor = cursor
         .and_then(|c| app.monitor_from_point(c.x, c.y).ok().flatten())
-        .or_else(|| app.primary_monitor().ok().flatten());
-    let Some(m) = monitor else { return };
-    let scale = m.scale_factor();
-    let wa = m.work_area();
+        .or_else(|| app.primary_monitor().ok().flatten())?;
+    let scale = monitor.scale_factor();
+    let wa = monitor.work_area();
     let (ww, wh) = ((WIDTH * scale) as i32, (HEIGHT * scale) as i32);
     let (ax, ay, aw, ah) = (wa.position.x, wa.position.y, wa.size.width as i32, wa.size.height as i32);
     let (x, y) = match saved {
@@ -87,13 +88,35 @@ fn place(app: &AppHandle, w: &WebviewWindow) {
         ),
         _ => (ax + (aw - ww) / 2, ay + ah - wh - (BOTTOM_GAP * scale) as i32 + (MARGIN * scale) as i32),
     };
-    let _ = w.set_size(LogicalSize::new(WIDTH, HEIGHT));
-    let _ = w.set_position(PhysicalPosition::new(x, y));
+    Some((x, y, ww, wh))
+}
+
+/// Sous Windows, la bulle ne passe jamais par les fonctions de fenêtre de
+/// Tauri : montrée sans être activée (pour ne pas voler le focus), elle est
+/// crue cachée par Tauri, qui la recacherait au moindre redimensionnement ou
+/// déplacement. Tout se fait directement, sur le fil principal, dans l'ordre.
+#[cfg(target_os = "windows")]
+fn on_main_hwnd(app: &AppHandle, w: &WebviewWindow, f: impl FnOnce(isize) + Send + 'static) {
+    if let Ok(h) = w.hwnd() {
+        let hwnd = h.0 as isize;
+        let _ = app.run_on_main_thread(move || f(hwnd));
+    }
 }
 
 pub fn show(app: &AppHandle) {
     let Some(w) = window(app) else { return };
-    place(app, &w);
+    let frame = frame(app);
+    #[cfg(target_os = "windows")]
+    {
+        on_main_hwnd(app, &w, move |h| crate::platform::windows::show_at(h, frame));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some((x, y, _, _)) = frame {
+            let _ = w.set_size(tauri::LogicalSize::new(WIDTH, HEIGHT));
+            let _ = w.set_position(PhysicalPosition::new(x, y));
+        }
+    }
     #[cfg(target_os = "macos")]
     {
         let w2 = w.clone();
@@ -103,12 +126,6 @@ pub fn show(app: &AppHandle) {
             }
         });
     }
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(h) = w.hwnd() {
-            crate::platform::windows::show_no_activate(h.0 as isize);
-        }
-    }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = w.show();
@@ -116,22 +133,27 @@ pub fn show(app: &AppHandle) {
 }
 
 pub fn hide(app: &AppHandle) {
-    if let Some(w) = window(app) {
+    let Some(w) = window(app) else { return };
+    #[cfg(target_os = "windows")]
+    {
+        on_main_hwnd(app, &w, crate::platform::windows::hide);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
         let _ = w.hide();
     }
 }
 
+/// Bulle cliquable (dictée en cours, erreur rattrapable) ou traversée par la
+/// souris. Sous Windows, une fenêtre traversable doit être « superposée »
+/// (WS_EX_LAYERED), ce qui fige l'affichage de WebView2 : la bulle y reste
+/// donc toujours cliquable, et ignore elle-même les clics hors dictée.
 pub fn set_interactive(app: &AppHandle, on: bool) {
+    if cfg!(target_os = "windows") {
+        return;
+    }
     if let Some(w) = window(app) {
         if cfg!(target_os = "linux") && !w.is_visible().unwrap_or(false) {
-            return;
-        }
-        // Sous Windows, la bulle est montrée sans passer par Tauri (pour ne pas
-        // voler le focus) : Tauri la croit donc cachée, et la recacherait au
-        // moindre changement de style. On bascule le style nous-mêmes.
-        #[cfg(target_os = "windows")]
-        if let Ok(h) = w.hwnd() {
-            crate::platform::windows::set_click_through(h.0 as isize, !on);
             return;
         }
         let _ = w.set_ignore_cursor_events(!on);
@@ -152,8 +174,15 @@ pub fn drag_start(app: &AppHandle) {
 /// `dx`, `dy` : déplacement du pointeur depuis le début du glisser, en points.
 pub fn drag_move(app: &AppHandle, dx: f64, dy: f64) {
     let Some((origin, scale)) = *DRAG.lock().unwrap_or_else(|e| e.into_inner()) else { return };
-    if let Some(w) = window(app) {
-        let _ = w.set_position(PhysicalPosition::new(origin.x + (dx * scale) as i32, origin.y + (dy * scale) as i32));
+    let Some(w) = window(app) else { return };
+    let (x, y) = (origin.x + (dx * scale) as i32, origin.y + (dy * scale) as i32);
+    #[cfg(target_os = "windows")]
+    {
+        on_main_hwnd(app, &w, move |h| crate::platform::windows::move_to(h, x, y));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = w.set_position(PhysicalPosition::new(x, y));
     }
 }
 

@@ -15,10 +15,9 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, GetForegroundWindow, GetWindowLongW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, GWL_EXSTYLE, HWND_TOPMOST, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWNOACTIVATE, WS_EX_LAYERED,
-    WS_EX_TRANSPARENT,
+    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, SetForegroundWindow,
+    SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SW_HIDE, SW_RESTORE,
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -107,29 +106,29 @@ pub fn open_url(url: &str) {
         .spawn();
 }
 
-/// Montre la bulle sans lui donner le focus, au-dessus de tout.
-pub fn show_no_activate(hwnd: isize) {
+/// Montre la bulle sans lui donner le focus, au-dessus de tout, à sa place.
+pub fn show_at(hwnd: isize, frame: Option<(i32, i32, i32, i32)>) {
     unsafe {
         let h = HWND(hwnd as *mut c_void);
-        let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
-        let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
+        let mut flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        let (x, y, w, hh) = frame.unwrap_or_default();
+        if frame.is_none() {
+            flags |= SWP_NOMOVE | SWP_NOSIZE;
+        }
+        let _ = SetWindowPos(h, Some(HWND_TOPMOST), x, y, w, hh, flags);
     }
 }
 
-/// Rend la bulle traversable par la souris (ou cliquable), sans la cacher ni
-/// l'activer : mêmes styles que Tauri, appliqués directement.
-pub fn set_click_through(hwnd: isize, on: bool) {
+pub fn hide(hwnd: isize) {
     unsafe {
-        let h = HWND(hwnd as *mut c_void);
-        let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
-        let bits = WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0;
-        let next = if on { ex | bits } else { ex & !bits };
-        if next == ex {
-            return;
-        }
-        SetWindowLongW(h, GWL_EXSTYLE, next as i32);
-        let flags = SWP_NOZORDER | SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED | SWP_NOACTIVATE;
-        let _ = SetWindowPos(h, None, 0, 0, 0, 0, flags);
+        let _ = ShowWindow(HWND(hwnd as *mut c_void), SW_HIDE);
+    }
+}
+
+pub fn move_to(hwnd: isize, x: i32, y: i32) {
+    unsafe {
+        let flags = SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER;
+        let _ = SetWindowPos(HWND(hwnd as *mut c_void), None, x, y, 0, 0, flags);
     }
 }
 

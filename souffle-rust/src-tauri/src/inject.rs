@@ -6,6 +6,8 @@
 use crate::engine::{PasteOpts, PasteOutcome};
 use crate::platform;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Exécute une action sur le fil principal et attend sa fin. Sur macOS, la
@@ -74,7 +76,13 @@ pub fn paste(text: &str, opts: &PasteOpts, on_main: OnMain) -> PasteOutcome {
     std::thread::sleep(Duration::from_millis(120));
 
     let (tx, rx) = std::sync::mpsc::channel();
+    // Une frappe arrivée trop tard (après « Copié ») collerait au mauvais moment.
+    let expired = Arc::new(AtomicBool::new(false));
+    let late = expired.clone();
     on_main(Box::new(move || {
+        if late.load(Ordering::SeqCst) {
+            return;
+        }
         let _ = tx.send(send_paste_keystroke());
     }));
     match rx.recv_timeout(Duration::from_secs(3)) {
@@ -84,6 +92,7 @@ pub fn paste(text: &str, opts: &PasteOpts, on_main: OnMain) -> PasteOutcome {
             return PasteOutcome::KeystrokeFailed;
         }
         Err(_) => {
+            expired.store(true, Ordering::SeqCst);
             crate::log!("collage impossible : pas de réponse du fil principal");
             return PasteOutcome::KeystrokeFailed;
         }

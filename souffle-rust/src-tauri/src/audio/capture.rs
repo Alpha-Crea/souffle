@@ -132,7 +132,7 @@ struct Worker {
 }
 
 /// Délai sans le moindre échantillon avant d'essayer un autre micro.
-const NO_SOUND_MS: u64 = 1800;
+const NO_SOUND_MS: u64 = 3000;
 /// Signal strictement nul : micro coupé, ou autorisation refusée sur macOS
 /// (le système livre alors du silence parfait au lieu d'une erreur).
 const ZERO_SIGNAL_MS: u64 = 2500;
@@ -354,7 +354,12 @@ impl Worker {
         if zero {
             crate::log!("capture : signal strictement nul depuis {ZERO_SIGNAL_MS} ms");
             self.emit(Event::Error("Micro muet — autorisation ou micro coupé".into()));
-            self.drop_session(false);
+            // La dictée se referme normalement : le moteur la termine et la bulle s'en va.
+            if let Some(s) = self.session.as_mut() {
+                s.stream = None;
+            }
+            self.close_segment(false, true);
+            self.session = None;
         }
     }
 
@@ -395,8 +400,17 @@ impl Worker {
             return;
         }
         if s.stream.is_some() && s.opened_at.elapsed() >= Duration::from_millis(NO_SOUND_MS) {
-            crate::log!("capture : aucun son de « {} », micro suivant", s.device);
             s.stream = None;
+            // Certains pilotes tardent à livrer le premier son : le même micro a
+            // droit à un second essai avant qu'on passe au suivant.
+            if !s.reopened {
+                s.reopened = true;
+                let device = s.device.clone();
+                s.tried.retain(|n| *n != device);
+                crate::log!("capture : aucun son de « {device} », nouvel essai");
+            } else {
+                crate::log!("capture : aucun son de « {} », micro suivant", s.device);
+            }
             self.open_next_device();
         }
     }
@@ -491,6 +505,80 @@ fn open_stream(device: &cpal::Device, generation: u64, tx: Sender<Msg>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    fn worker(live: bool) -> (Worker, Arc<Mutex<Vec<String>>>) {
+        let dir = std::env::temp_dir().join(format!("souffle-capture-{}-{live}", std::process::id()));
+        let events = Arc::new(Mutex::new(vec![]));
+        let ev = events.clone();
+        let sink: Sink = Arc::new(move |e| {
+            let name = match e {
+                Event::Acquiring => "acquiring".to_string(),
+                Event::Started { .. } => "started".into(),
+                Event::Level(_) => return,
+                Event::Part(p) => format!("part{}", if p.last { " last" } else { "" }),
+                Event::Error(m) => format!("error {m}"),
+            };
+            ev.lock().unwrap().push(name);
+        });
+        let (tx, _rx) = mpsc::channel();
+        let mut w = Worker::new(Arc::new(Pending::new(dir)), sink, tx);
+        w.session = Some(Session {
+            id: "test".into(),
+            live,
+            persist: false,
+            microphone: String::new(),
+            seq: 0,
+            paused: false,
+            stream: None,
+            generation: 0,
+            device: "test".into(),
+            rate: SAMPLE_RATE,
+            channels: 1,
+            resampler: Resampler::new(SAMPLE_RATE, SAMPLE_RATE),
+            segmenter: Segmenter::new(live),
+            disk: None,
+            disk_buf: vec![],
+            started: false,
+            tried: vec![],
+            reopened: false,
+            glitch_logged: false,
+            opened_at: Instant::now(),
+            zero_ms: 0,
+            heard: false,
+            last_level: Instant::now(),
+        });
+        (w, events)
+    }
+
+    fn feed(w: &mut Worker, ms: u32, amp: f32) {
+        let n = (SAMPLE_RATE * ms / 1000) as usize;
+        let data: Vec<f32> = (0..n).map(|i| amp * (i as f32 * 0.19).sin()).collect();
+        for chunk in data.chunks(480) {
+            w.samples(0, chunk);
+        }
+    }
+
+    #[test]
+    fn digital_silence_after_speech_is_not_a_dead_microphone() {
+        for live in [false, true] {
+            let (mut w, events) = worker(live);
+            feed(&mut w, 1500, 0.1);
+            feed(&mut w, 6000, 0.0);
+            assert!(w.session.is_some(), "la dictée continue (live = {live})");
+            assert!(!events.lock().unwrap().iter().any(|e| e.starts_with("error")));
+        }
+    }
+
+    #[test]
+    fn digital_silence_from_the_start_closes_the_dictation() {
+        let (mut w, events) = worker(false);
+        feed(&mut w, 3000, 0.0);
+        assert!(w.session.is_none());
+        let ev = events.lock().unwrap().clone();
+        let err = ev.iter().position(|e| e.starts_with("error")).expect("erreur signalée");
+        assert!(ev[err..].iter().any(|e| e == "part last"), "un dernier morceau referme la dictée : {ev:?}");
+    }
 
     #[test]
     fn glitches_do_not_stop_the_microphone() {
