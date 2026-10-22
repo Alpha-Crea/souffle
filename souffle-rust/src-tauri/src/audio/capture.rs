@@ -118,6 +118,8 @@ struct Session {
     glitch_logged: bool,
     opened_at: Instant,
     zero_ms: u64,
+    /// Au moins un échantillon non nul reçu pendant cette dictée.
+    heard: bool,
     last_level: Instant,
 }
 
@@ -202,6 +204,7 @@ impl Worker {
                     glitch_logged: false,
                     opened_at: Instant::now(),
                     zero_ms: 0,
+                    heard: false,
                     last_level: Instant::now(),
                 });
                 self.open_disk();
@@ -305,9 +308,15 @@ impl Worker {
         }
         let mut mono = Vec::with_capacity(interleaved.len());
         to_mono(interleaved, s.channels, &mut mono);
+        // Le silence numérique ne trahit un micro coupé que s'il dure depuis le
+        // début : les micros Intel Smart Sound (et d'autres, avec réduction de
+        // bruit) livrent des zéros parfaits dès qu'on se tait.
         if mono.iter().all(|&x| x == 0.0) {
-            s.zero_ms += mono.len() as u64 * 1000 / s.rate as u64;
+            if !s.heard {
+                s.zero_ms += mono.len() as u64 * 1000 / s.rate as u64;
+            }
         } else {
+            s.heard = true;
             s.zero_ms = 0;
         }
         let mut pcm = Vec::with_capacity(mono.len() / 2 + 8);
