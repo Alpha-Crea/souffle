@@ -107,6 +107,7 @@ function render(v) {
   hint.textContent =
     state === 'working' && step ? step.charAt(0).toUpperCase() + step.slice(1)
     : state === 'done' && words ? `${words} mot${words > 1 ? 's' : ''}`
+    : state === 'error' && retryable && /réseau/.test(message || '') ? 'Nouvel essai tout seul, ou cliquez'
     : state === 'error' && retryable ? 'Cliquez pour réessayer'
     : state === 'error' && /^Micro/.test(message || '') ? 'Réglages Système › Micro'
     : state === 'error' && /Accessibilité/.test(message || '') ? 'Réglages Système › Accessibilité'

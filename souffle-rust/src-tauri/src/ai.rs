@@ -80,19 +80,36 @@ fn other_provider(provider: &str) -> Option<&'static str> {
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        // La connexion chiffrée reste ouverte entre deux dictées : la
-        // rétablir coûte de 100 à 300 ms à chaque fois.
-        .pool_idle_timeout(Duration::from_secs(300))
-        .tcp_keepalive(Duration::from_secs(60))
+        // La connexion chiffrée reste ouverte le temps d'une dictée : la
+        // rétablir coûte de 100 à 300 ms. Pas plus longtemps : une connexion
+        // restée inactive est souvent coupée en silence (veille, Wi-Fi, box),
+        // et la réutiliser fait échouer l'envoi suivant.
+        .pool_idle_timeout(Duration::from_secs(45))
+        .pool_max_idle_per_host(2)
+        .tcp_keepalive(Duration::from_secs(30))
         .user_agent(concat!("Souffle/", env!("CARGO_PKG_VERSION")))
         .build()
         .unwrap_or_default()
 }
 
+/// Client sans connexions gardées : chaque nouvel essai part sur une
+/// connexion neuve, jamais sur celle qui vient d'échouer.
+fn fresh_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .pool_max_idle_per_host(0)
+        .user_agent(concat!("Souffle/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .unwrap_or_default()
+}
+
+/// Nouveaux essais après une panne de réseau, et l'attente avant chacun.
+const NETWORK_RETRIES_MS: [u64; 2] = [400, 2000];
+
 fn net_err(e: reqwest::Error) -> AiError {
     if e.is_timeout() {
         AiError::Network("délai dépassé".into())
-    } else if e.is_connect() || e.is_request() {
+    } else if e.is_connect() || e.is_request() || e.is_body() {
         AiError::Network(e.to_string())
     } else {
         AiError::Other(e.to_string())
@@ -105,7 +122,10 @@ async fn check(res: reqwest::Response) -> Result<Value, AiError> {
         let body = res.text().await.unwrap_or_default();
         return Err(AiError::Http { status, body });
     }
-    res.json::<Value>().await.map_err(|e| AiError::Other(format!("réponse illisible : {e}")))
+    // Une connexion coupée pendant la réponse est une panne de réseau ; une
+    // réponse reçue mais illisible, non.
+    let body = res.bytes().await.map_err(net_err)?;
+    serde_json::from_slice::<Value>(&body).map_err(|e| AiError::Other(format!("réponse illisible : {e}")))
 }
 
 /// Ouvre la connexion aux fournisseurs pendant que l'on parle : à la fin de
@@ -157,8 +177,10 @@ pub fn whisper_prompt(dictionary: &[String], context: &str) -> String {
     tail_chars(&joined, 850).to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn transcribe_once(
     http: &reqwest::Client,
+    patient: bool,
     cfg: &Config,
     provider: &str,
     model: &str,
@@ -183,8 +205,10 @@ async fn transcribe_once(
         form = form.text("prompt", prompt);
     }
     // Vingt-cinq secondes de parole pèsent ~800 Ko et sont transcrites en une
-    // seconde : passé ce délai, la connexion est bloquée, autant le dire vite.
-    let timeout = Duration::from_secs(30 + audio.bytes.len() as u64 / 100_000);
+    // seconde : passé ce délai, la connexion est sans doute morte. Le premier
+    // essai abandonne vite pour laisser place à un essai sur connexion neuve.
+    let base = if patient { 40 } else { 15 };
+    let timeout = Duration::from_secs(base + audio.bytes.len() as u64 / 100_000);
     let mut req = http.post(url).multipart(form).timeout(timeout);
     if !key.is_empty() {
         req = req.bearer_auth(key);
@@ -202,8 +226,15 @@ pub async fn transcribe(
     context: &str,
 ) -> Result<String, AiError> {
     let provider = cfg.stt_provider.as_str();
-    let first = transcribe_once(http, cfg, provider, &cfg.stt_model, &keys.key(key_name_for(provider)), audio, context).await;
-    let err = match first {
+    let key = keys.key(key_name_for(provider));
+    let mut res = transcribe_once(http, false, cfg, provider, &cfg.stt_model, &key, audio, context).await;
+    for wait in NETWORK_RETRIES_MS {
+        let Err(AiError::Network(e)) = &res else { break };
+        crate::log!("transcription : réseau ({e}), nouvel essai sur une connexion neuve");
+        tokio::time::sleep(Duration::from_millis(wait)).await;
+        res = transcribe_once(&fresh_client(), true, cfg, provider, &cfg.stt_model, &key, audio, context).await;
+    }
+    let err = match res {
         Ok(t) => return Ok(t),
         Err(e) => e,
     };
@@ -212,7 +243,7 @@ pub async fn transcribe(
             let key = keys.key(key_name_for(other));
             if !key.is_empty() {
                 crate::log!("transcription : {provider} indisponible ({err}), bascule sur {other}");
-                return transcribe_once(http, cfg, other, default_models(other).0, &key, audio, context)
+                return transcribe_once(&fresh_client(), true, cfg, other, default_models(other).0, &key, audio, context)
                     .await
                     .map_err(|_| err);
             }
@@ -523,7 +554,14 @@ pub async fn format(http: &reqwest::Client, cfg: &Config, keys: &dyn Keys, text:
         }
         let custom = if prov == provider { cfg.custom_llm_url.as_str() } else { "" };
         let url = format!("{}/chat/completions", base_url(&prov, custom));
-        match chat_once(http, &url, &key, &chat_payload(&prov, &model, messages.clone())).await {
+        let payload = chat_payload(&prov, &model, messages.clone());
+        let mut res = chat_once(http, &url, &key, &payload).await;
+        if let Err(AiError::Network(e)) = &res {
+            crate::log!("reformulation : réseau ({e}), nouvel essai sur une connexion neuve");
+            tokio::time::sleep(Duration::from_millis(NETWORK_RETRIES_MS[0])).await;
+            res = chat_once(&fresh_client(), &url, &key, &payload).await;
+        }
+        match res {
             Ok(out) => {
                 let out = clean_output(&out);
                 if out.is_empty() {
@@ -700,5 +738,46 @@ mod tests {
         assert!(AiError::Http { status: 404, body: String::new() }.model_refused());
         assert_eq!(clean_output("<think>hmm</think>\n<dictee>Bonjour.</dictee>"), "Bonjour.");
         assert_eq!(tail_chars("abcdé", 2), "dé");
+    }
+}
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Un serveur qui coupe net la première connexion (comme une connexion
+    /// morte après une mise en veille), puis répond normalement.
+    fn flaky_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for (n, stream) in listener.incoming().enumerate() {
+                let mut stream = stream.unwrap();
+                let mut buf = [0u8; 65536];
+                let _ = stream.read(&mut buf);
+                if n == 0 {
+                    drop(stream);
+                    continue;
+                }
+                let body = r#"{"text":"bonjour"}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn a_dead_connection_is_retried_on_a_fresh_one() {
+        let cfg = Config { stt_provider: "custom".into(), custom_stt_url: flaky_server(), ..Default::default() };
+        let audio = crate::pending::Audio { bytes: vec![0; 3200], mime: "audio/wav".into(), duration_ms: 100 };
+        let keys = |_: &str| String::new();
+        let text = transcribe(&client(), &cfg, &keys, &audio, "").await;
+        assert_eq!(text.unwrap(), "bonjour");
     }
 }

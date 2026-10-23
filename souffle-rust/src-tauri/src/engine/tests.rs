@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[derive(Default)]
 struct MockAi {
     broken: AtomicBool,
+    offline: AtomicBool,
     formats: AtomicUsize,
 }
 
@@ -21,6 +22,9 @@ impl Ai for MockAi {
                 status: 403,
                 body: r#"{"error":{"message":"Access denied. Please check your network settings."}}"#.into(),
             });
+        }
+        if self.offline.load(Ordering::SeqCst) {
+            return Err(AiError::Network("connexion réinitialisée".into()));
         }
         if let Some(t) = s.strip_prefix("LENT:") {
             tokio::time::sleep(Duration::from_millis(80)).await;
@@ -494,6 +498,33 @@ async fn old_dictation_does_not_touch_the_new_bubble() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(b.pastes(), vec!["[bonjour]"], "l'ancienne dictée est bien écrite");
     assert_eq!(b.engine.state(), State::Recording, "la nouvelle dictée continue");
+}
+
+#[tokio::test(start_paused = true)]
+async fn network_outage_keeps_audio_and_retries_alone() {
+    let b = bench("offline", |_| {});
+    b.ai.offline.store(true, Ordering::SeqCst);
+    b.start().await;
+    let id = b.id();
+    b.part(0, Some("TXT:bonjour le monde"), false, true);
+    settle().await;
+    assert_eq!(b.engine.state(), State::Error);
+    let v = b.last_view();
+    assert_eq!(v.message.as_deref(), Some("Pas de réseau — audio gardé"));
+    assert!(v.retry);
+    assert_eq!(b.engine.pending.parts(&id).len(), 1, "l'audio est gardé");
+
+    // Toujours pas de réseau au premier nouvel essai : rien ne se perd.
+    tokio::time::sleep(Duration::from_secs(21)).await;
+    assert_eq!(b.engine.pending.parts(&id).len(), 1);
+
+    // Le réseau revient : le nouvel essai suivant retrouve le texte.
+    b.ai.offline.store(false, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(61)).await;
+    assert_eq!(b.copies(), vec!["[bonjour le monde]"], "texte dans le presse-papier");
+    assert!(b.history().iter().any(|e| e.text == "[bonjour le monde]"), "et dans l'historique");
+    assert!(b.engine.pending.parts(&id).is_empty(), "audio oublié une fois transcrit");
+    assert!(!b.engine.snapshot().has_failed);
 }
 
 #[tokio::test(start_paused = true)]

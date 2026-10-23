@@ -283,6 +283,15 @@ pub fn is_hallucination(text: &str) -> bool {
     KNOWN.iter().any(|k| t == k.replace('-', "")) || KNOWN.contains(&t.as_str())
 }
 
+/// Message de la bulle après un échec. Une panne de réseau ne perd rien :
+/// on le dit, puisque Souffle réessaiera tout seul.
+fn failure_message(e: &AiError) -> String {
+    match e {
+        AiError::Network(_) => "Pas de réseau — audio gardé".into(),
+        _ => ai::human_error(e),
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Moteur                                                              */
 /* ------------------------------------------------------------------ */
@@ -327,6 +336,8 @@ const CAPTURE_WATCHDOG_MS: u64 = 4500;
 const WORKING_TIMEOUT_MS: u64 = 180_000;
 /// Au-delà de cette durée d'audio, une transcription vide n'efface rien.
 const EMPTY_KEEP_MS: u64 = 4000;
+/// Après une panne de réseau : nouveaux essais automatiques, en secondes.
+const AUTO_RETRY_S: [u64; 4] = [20, 60, 180, 600];
 /// En mode « maintenir », un appui plus court est un simple appui : la dictée continue.
 const HOLD_MIN_MS: u64 = 400;
 
@@ -1085,10 +1096,39 @@ impl Engine {
         };
         self.desk.tray_changed();
         if show {
-            if let Some(e) = err {
-                self.fail(&ai::human_error(&e), 7000, true);
+            if let Some(e) = &err {
+                self.fail(&failure_message(e), 7000, true);
             }
         }
+        if matches!(err, Some(AiError::Network(_))) {
+            self.retry_in_background(d);
+        }
+    }
+
+    /// Panne de réseau : l'audio est gardé et Souffle réessaie tout seul,
+    /// de plus en plus espacé. Le texte retrouvé va dans l'historique et le
+    /// presse-papier, et la bulle le signale.
+    fn retry_in_background(&self, d: &Arc<Dictation>) {
+        let me = self.arc();
+        let d = d.clone();
+        self.rt.spawn(async move {
+            for secs in AUTO_RETRY_S {
+                tokio::time::sleep(Duration::from_secs(secs)).await;
+                // Réessayée entre-temps (bulle, menu) ou annulée : plus rien à faire.
+                if !me.inner().failed.as_ref().is_some_and(|f| Arc::ptr_eq(f, &d)) {
+                    return;
+                }
+                // On ne dérange pas une dictée en cours : rendez-vous au suivant.
+                if !matches!(me.state(), State::Idle | State::Done | State::Error) {
+                    continue;
+                }
+                crate::log!("nouvel essai automatique de {}", d.id);
+                if me.retry_dictation(d.clone(), false).await {
+                    return;
+                }
+            }
+            crate::log!("dictée {} toujours en attente : menu « Réessayer » ou prochain démarrage", d.id);
+        });
     }
 
     /// Relance une dictée en échec à partir de son audio gardé.
@@ -1125,7 +1165,7 @@ impl Engine {
             self.inner().failed = Some(d.clone());
             self.desk.tray_changed();
             if !quiet {
-                self.fail(&ai::human_error(&e), 7000, true);
+                self.fail(&failure_message(&e), 7000, true);
             }
             return false;
         }
@@ -1299,6 +1339,9 @@ impl Engine {
             if self.is_current(d) {
                 let s = if failed_parts > 1 { "s" } else { "" };
                 self.fail(&format!("{failed_parts} phrase{s} non transcrite{s}"), 7000, true);
+            }
+            if matches!(lock(&d.st).failed, Some(AiError::Network(_))) {
+                self.retry_in_background(d);
             }
             return;
         }
