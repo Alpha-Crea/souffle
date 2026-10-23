@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Souffle</title>
+<link rel="stylesheet" href="bubble.css">
+</head>
+<body>
+  <div class="pill" id="pill" data-state="idle" role="button" aria-live="polite">
+    <span class="glow" aria-hidden="true"><span class="ring"><span class="spin"></span></span></span>
+    <span class="halo" aria-hidden="true"><span class="spin"></span></span>
+    <span class="sheen" aria-hidden="true"></span>
+    <span class="glyph" aria-hidden="true">
+      <span class="bars"><span></span><span></span><span></span><span></span><span></span></span>
+      <svg class="icon i-spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle></svg>
+      <svg class="icon i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+      <svg class="icon i-cross" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"></path></svg>
+    </span>
+    <span class="text">
+      <span class="label" id="label">Écoute…</span>
+      <span class="hint" id="hint">Cliquez pour mettre en pause</span>
+    </span>
+    <span class="timer" id="timer">0:00</span>
+  </div>
+  <script src="bubble.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+[package]
+name = "souffle"
+version = "0.3.8"
+description = "Dictée vocale : un raccourci, vous parlez, le texte propre s'écrit là où vous tapez."
+authors = ["Alpha Agency"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "souffle_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time", "sync", "macros", "rt"] }
+tokio-util = "0.7"
+async-trait = "0.1"
+# TLS du système : trousseau macOS, magasin Windows. Les certificats d'entreprise
+# ou d'antivirus sont donc reconnus, et rien de natif n'est à compiler.
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "native-tls"] }
+cpal = "0.18"
+arboard = { version = "3", default-features = false }
+enigo = "0.6"
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+regex = "1"
+dirs = "6"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "macros", "rt"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+core-foundation = "0.10"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSGeometry", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std", "block2", "libc", "objc2-core-foundation", "NSResponder", "NSView", "NSWindow", "NSGraphics",
+  "NSVisualEffectView", "NSWorkspace", "NSRunningApplication", "NSEvent",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Threading",
+  "Win32_UI_Accessibility",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+] }
+
+[profile.release]
+codegen-units = 4
+lto = "thin"
+opt-level = "s"
+panic = "unwind"
+strip = true
