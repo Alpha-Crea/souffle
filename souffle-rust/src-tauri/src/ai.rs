@@ -79,7 +79,7 @@ fn other_provider(provider: &str) -> Option<&'static str> {
 
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
+        .connect_timeout(CONNECT_TIMEOUT)
         // La connexion chiffrée reste ouverte le temps d'une dictée : la
         // rétablir coûte de 100 à 300 ms. Pas plus longtemps : une connexion
         // restée inactive est souvent coupée en silence (veille, Wi-Fi, box),
@@ -96,23 +96,41 @@ pub fn client() -> reqwest::Client {
 /// connexion neuve, jamais sur celle qui vient d'échouer.
 fn fresh_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
+        .connect_timeout(CONNECT_TIMEOUT)
         .pool_max_idle_per_host(0)
         .user_agent(concat!("Souffle/", env!("CARGO_PKG_VERSION")))
         .build()
         .unwrap_or_default()
 }
 
+/// Ouvrir une connexion chiffrée prend parfois plusieurs secondes (réseau
+/// lent, antivirus qui inspecte le trafic) : on laisse le temps.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Nouveaux essais après une panne de réseau, et l'attente avant chacun.
 const NETWORK_RETRIES_MS: [u64; 2] = [400, 2000];
 
+/// L'erreur et ses causes, pour le journal : « error sending request » seul
+/// ne dit pas si c'est le nom de domaine, la connexion ou le chiffrement.
+fn describe(e: &reqwest::Error) -> String {
+    let mut text = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        text.push_str(" ← ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
 fn net_err(e: reqwest::Error) -> AiError {
     if e.is_timeout() {
-        AiError::Network("délai dépassé".into())
+        let stage = if e.is_connect() { "connexion" } else { "réponse" };
+        AiError::Network(format!("délai dépassé ({stage}) — {}", describe(&e)))
     } else if e.is_connect() || e.is_request() || e.is_body() {
-        AiError::Network(e.to_string())
+        AiError::Network(describe(&e))
     } else {
-        AiError::Other(e.to_string())
+        AiError::Other(describe(&e))
     }
 }
 
@@ -141,11 +159,27 @@ pub async fn prewarm(http: &reqwest::Client, cfg: &Config, keys: &dyn Keys) {
             continue;
         }
         let key = keys.key(key_name_for(&provider));
-        let mut req = http.get(format!("{base}/models")).timeout(Duration::from_secs(8));
-        if !key.is_empty() {
-            req = req.bearer_auth(key);
+        // Une connexion gardée a pu mourir en silence : l'essai échoue aussitôt
+        // et la libère. Le second en ouvre une neuve, prête pour l'envoi.
+        for attempt in 0..2 {
+            let t0 = std::time::Instant::now();
+            let mut req = http.get(format!("{base}/models")).timeout(CONNECT_TIMEOUT);
+            if !key.is_empty() {
+                req = req.bearer_auth(&key);
+            }
+            match req.send().await {
+                Ok(_) => {
+                    crate::log!("connexion à {provider} prête ({} ms)", t0.elapsed().as_millis());
+                    break;
+                }
+                Err(e) => crate::log!(
+                    "connexion à {provider} : échec{} après {} ms — {}",
+                    if attempt == 0 { "" } else { " (second essai)" },
+                    t0.elapsed().as_millis(),
+                    describe(&e)
+                ),
+            }
         }
-        let _ = req.send().await;
     }
 }
 
@@ -205,9 +239,9 @@ async fn transcribe_once(
         form = form.text("prompt", prompt);
     }
     // Vingt-cinq secondes de parole pèsent ~800 Ko et sont transcrites en une
-    // seconde : passé ce délai, la connexion est sans doute morte. Le premier
-    // essai abandonne vite pour laisser place à un essai sur connexion neuve.
-    let base = if patient { 40 } else { 15 };
+    // seconde ; le délai couvre aussi l'ouverture de la connexion, parfois
+    // lente. Au-delà, un nouvel essai part sur une connexion neuve.
+    let base = if patient { 60 } else { 30 };
     let timeout = Duration::from_secs(base + audio.bytes.len() as u64 / 100_000);
     let mut req = http.post(url).multipart(form).timeout(timeout);
     if !key.is_empty() {
