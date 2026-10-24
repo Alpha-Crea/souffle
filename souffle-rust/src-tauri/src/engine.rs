@@ -328,7 +328,7 @@ const WORKING_TIMEOUT_MS: u64 = 180_000;
 /// Au-delà de cette durée d'audio, une transcription vide n'efface rien.
 const EMPTY_KEEP_MS: u64 = 4000;
 /// Après une panne de réseau : nouveaux essais automatiques, en secondes.
-const AUTO_RETRY_S: [u64; 4] = [20, 60, 180, 600];
+const AUTO_RETRY_S: [u64; 8] = [15, 30, 60, 120, 240, 480, 900, 1800];
 /// En mode « maintenir », un appui plus court est un simple appui : la dictée continue.
 const HOLD_MIN_MS: u64 = 400;
 
@@ -1105,8 +1105,11 @@ impl Engine {
         self.rt.spawn(async move {
             for secs in AUTO_RETRY_S {
                 tokio::time::sleep(Duration::from_secs(secs)).await;
-                // Réessayée entre-temps (bulle, menu) ou annulée : plus rien à faire.
-                if !me.inner().failed.as_ref().is_some_and(|f| Arc::ptr_eq(f, &d)) {
+                // Retranscrite entre-temps (bulle, menu, démarrage) : son audio a
+                // été oublié, plus rien à faire. On ne regarde pas la seule
+                // « dernière dictée en échec » : une panne en fait souvent échouer
+                // plusieurs, et chacune doit revenir.
+                if me.pending.parts(&d.id).is_empty() {
                     return;
                 }
                 // On ne dérange pas une dictée en cours : rendez-vous au suivant.

@@ -528,6 +528,29 @@ async fn network_outage_keeps_audio_and_retries_alone() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn every_dictation_lost_in_an_outage_comes_back() {
+    let b = bench("offline-many", |_| {});
+    b.ai.offline.store(true, Ordering::SeqCst);
+    b.start().await;
+    let first = b.id();
+    b.part(0, Some("TXT:première"), false, true);
+    settle().await;
+    b.start().await;
+    let second = b.id();
+    b.part(0, Some("TXT:seconde"), false, true);
+    settle().await;
+    assert_eq!(b.engine.state(), State::Error);
+    // Le réseau revient quelques minutes plus tard.
+    tokio::time::sleep(Duration::from_secs(100)).await;
+    b.ai.offline.store(false, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    let texts: Vec<String> = b.history().iter().map(|e| e.text.clone()).collect();
+    assert!(texts.contains(&"[première]".to_string()), "{texts:?}");
+    assert!(texts.contains(&"[seconde]".to_string()), "{texts:?}");
+    assert!(b.engine.pending.parts(&first).is_empty() && b.engine.pending.parts(&second).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn watchdog_and_microphone() {
     let b = bench("watchdog", |_| {});
     b.engine.start();
