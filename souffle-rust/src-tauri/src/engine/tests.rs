@@ -510,7 +510,7 @@ async fn network_outage_keeps_audio_and_retries_alone() {
     settle().await;
     assert_eq!(b.engine.state(), State::Error);
     let v = b.last_view();
-    assert_eq!(v.message.as_deref(), Some("Pas de réseau — audio gardé"));
+    assert_eq!(v.message.as_deref(), Some("Pas de réseau"));
     assert!(v.retry);
     assert_eq!(b.engine.pending.parts(&id).len(), 1, "l'audio est gardé");
 

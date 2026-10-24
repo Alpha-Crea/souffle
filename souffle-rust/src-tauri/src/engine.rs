@@ -283,15 +283,6 @@ pub fn is_hallucination(text: &str) -> bool {
     KNOWN.iter().any(|k| t == k.replace('-', "")) || KNOWN.contains(&t.as_str())
 }
 
-/// Message de la bulle après un échec. Une panne de réseau ne perd rien :
-/// on le dit, puisque Souffle réessaiera tout seul.
-fn failure_message(e: &AiError) -> String {
-    match e {
-        AiError::Network(_) => "Pas de réseau — audio gardé".into(),
-        _ => ai::human_error(e),
-    }
-}
-
 /* ------------------------------------------------------------------ */
 /* Moteur                                                              */
 /* ------------------------------------------------------------------ */
@@ -1097,7 +1088,7 @@ impl Engine {
         self.desk.tray_changed();
         if show {
             if let Some(e) = &err {
-                self.fail(&failure_message(e), 7000, true);
+                self.fail(&ai::human_error(e), 7000, true);
             }
         }
         if matches!(err, Some(AiError::Network(_))) {
@@ -1165,7 +1156,7 @@ impl Engine {
             self.inner().failed = Some(d.clone());
             self.desk.tray_changed();
             if !quiet {
-                self.fail(&failure_message(&e), 7000, true);
+                self.fail(&ai::human_error(&e), 7000, true);
             }
             return false;
         }
